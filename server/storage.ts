@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import {
   brands, creatives, users,
   type Brand, type InsertBrand,
@@ -12,6 +12,7 @@ export interface IStorage {
   getUserByEmail(email: string): Promise<User | undefined>;
   getUserById(id: number): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
+  updateUser(id: number, updates: Partial<User>): Promise<User | undefined>;
   getDashboardStats(): Promise<DashboardStats>;
   getBrands(): Promise<Brand[]>;
   getBrand(id: number): Promise<Brand | undefined>;
@@ -23,6 +24,8 @@ export interface IStorage {
   createCreative(creative: Omit<Creative, "id" | "createdAt">): Promise<Creative>;
   updateCreative(id: number, updates: Partial<Creative>): Promise<Creative | undefined>;
   deleteCreative(id: number): Promise<void>;
+  getProductsWithPrices(): Promise<any[]>;
+  getSubscription(subscriptionId: string): Promise<any>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -39,6 +42,11 @@ export class DatabaseStorage implements IStorage {
   async createUser(user: InsertUser): Promise<User> {
     const [created] = await db.insert(users).values(user).returning();
     return created;
+  }
+
+  async updateUser(id: number, updates: Partial<User>): Promise<User | undefined> {
+    const [updated] = await db.update(users).set(updates as any).where(eq(users.id, id)).returning();
+    return updated;
   }
 
   async getDashboardStats(): Promise<DashboardStats> {
@@ -78,18 +86,12 @@ export class DatabaseStorage implements IStorage {
 
   async getCreatives(brandId?: number): Promise<CreativeWithBrand[]> {
     const rows = await db
-      .select({
-        creative: creatives,
-        brand: brands,
-      })
+      .select({ creative: creatives, brand: brands })
       .from(creatives)
       .innerJoin(brands, eq(creatives.brandId, brands.id))
       .orderBy(creatives.createdAt);
 
-    const filtered = brandId
-      ? rows.filter(r => r.creative.brandId === brandId)
-      : rows;
-
+    const filtered = brandId ? rows.filter(r => r.creative.brandId === brandId) : rows;
     return filtered.map(r => ({ ...r.creative, brand: r.brand }));
   }
 
@@ -110,6 +112,52 @@ export class DatabaseStorage implements IStorage {
 
   async deleteCreative(id: number): Promise<void> {
     await db.delete(creatives).where(eq(creatives.id, id));
+  }
+
+  async getProductsWithPrices(): Promise<any[]> {
+    try {
+      const result = await db.execute(sql`
+        SELECT
+          p.id as product_id, p.name as product_name,
+          p.description as product_description, p.metadata as product_metadata,
+          pr.id as price_id, pr.unit_amount, pr.currency, pr.recurring, pr.active as price_active
+        FROM stripe.products p
+        LEFT JOIN stripe.prices pr ON pr.product = p.id AND pr.active = true
+        WHERE p.active = true
+        ORDER BY pr.unit_amount ASC
+      `);
+      const map = new Map<string, any>();
+      for (const row of result.rows as any[]) {
+        if (!map.has(row.product_id)) {
+          map.set(row.product_id, {
+            id: row.product_id, name: row.product_name,
+            description: row.product_description,
+            metadata: row.product_metadata || {},
+            prices: [],
+          });
+        }
+        if (row.price_id) {
+          map.get(row.product_id).prices.push({
+            id: row.price_id, unit_amount: row.unit_amount,
+            currency: row.currency, recurring: row.recurring,
+          });
+        }
+      }
+      return Array.from(map.values());
+    } catch {
+      return [];
+    }
+  }
+
+  async getSubscription(subscriptionId: string): Promise<any> {
+    try {
+      const result = await db.execute(
+        sql`SELECT * FROM stripe.subscriptions WHERE id = ${subscriptionId}`
+      );
+      return result.rows[0] || null;
+    } catch {
+      return null;
+    }
   }
 }
 

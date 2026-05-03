@@ -10,6 +10,9 @@ export const users = pgTable("users", {
   password: text("password").notNull(),
   name: text("name").notNull(),
   avatarUrl: text("avatar_url"),
+  plan: text("plan").notNull().default("free"),
+  stripeCustomerId: text("stripe_customer_id"),
+  stripeSubscriptionId: text("stripe_subscription_id"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -41,6 +44,8 @@ export const creatives = pgTable("creatives", {
   goal: text("goal").notNull(),
   adCopy: jsonb("ad_copy"),
   imageData: text("image_data"),
+  videoUrl: text("video_url"),
+  mediaType: text("media_type").notNull().default("image"),
   status: text("status").notNull().default("generating"),
   performanceScore: integer("performance_score"),
   isFavorite: boolean("is_favorite").notNull().default(false),
@@ -57,9 +62,9 @@ export const creativesRelations = relations(creatives, ({ one }) => ({
 }));
 
 // === SCHEMAS ===
-export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, avatarUrl: true });
+export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, avatarUrl: true, plan: true, stripeCustomerId: true, stripeSubscriptionId: true });
 export const insertBrandSchema = createInsertSchema(brands).omit({ id: true, createdAt: true });
-export const insertCreativeSchema = createInsertSchema(creatives).omit({ id: true, createdAt: true, adCopy: true, imageData: true, status: true, performanceScore: true }).extend({
+export const insertCreativeSchema = createInsertSchema(creatives).omit({ id: true, createdAt: true, adCopy: true, imageData: true, videoUrl: true, status: true, performanceScore: true }).extend({
   brandId: z.coerce.number().int().positive(),
 });
 
@@ -74,7 +79,7 @@ export type InsertCreative = z.infer<typeof insertCreativeSchema>;
 export type CreateBrandRequest = InsertBrand;
 export type UpdateBrandRequest = Partial<InsertBrand>;
 
-export interface GenerateCreativeRequest {
+export interface GenerateCreativeInput {
   brandId: number;
   platform: string;
   formatSize: string;
@@ -83,6 +88,10 @@ export interface GenerateCreativeRequest {
   productDescription: string;
   targetAudience?: string;
   goal: string;
+  title?: string;
+}
+
+export interface GenerateCreativeRequest extends GenerateCreativeInput {
   title: string;
 }
 
@@ -122,3 +131,33 @@ export const INDUSTRIES = [
 ] as const;
 
 export const FONTS = ["Inter", "Roboto", "Montserrat", "Poppins", "Playfair Display", "Raleway", "Lato"] as const;
+
+export const PLANS = {
+  free: {
+    name: "Free",
+    nameAr: "مجاني",
+    price: 0,
+    creatives: 5,
+    brands: 2,
+    videoUpload: false,
+    aiVideo: false,
+  },
+  pro: {
+    name: "Pro",
+    nameAr: "احترافي",
+    price: 29,
+    creatives: 100,
+    brands: 20,
+    videoUpload: true,
+    aiVideo: true,
+  },
+  business: {
+    name: "Business",
+    nameAr: "أعمال",
+    price: 79,
+    creatives: -1,
+    brands: -1,
+    videoUpload: true,
+    aiVideo: true,
+  },
+} as const;
