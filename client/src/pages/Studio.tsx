@@ -409,15 +409,14 @@ export default function Studio() {
 
                 {/* Upload Video */}
                 <button
-                  onClick={() => isPro ? setMediaMode("video-upload") : null}
+                  onClick={() => setMediaMode("video-upload")}
                   data-testid="media-type-video-upload"
                   className={`relative flex flex-col items-center gap-3 p-5 rounded-xl border-2 transition-all ${
-                    mediaMode === "video-upload" ? "border-primary bg-primary/5 shadow-md"
-                    : isPro ? "border-border/50 hover:border-primary/40 bg-background"
-                    : "border-border/40 bg-muted/20 cursor-not-allowed opacity-60"
+                    mediaMode === "video-upload"
+                      ? "border-primary bg-primary/5 shadow-md"
+                      : "border-border/50 hover:border-primary/40 bg-background"
                   }`}
                 >
-                  {!isPro && <ProBadge />}
                   <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${mediaMode === "video-upload" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
                     <Upload className="w-6 h-6" />
                   </div>
@@ -430,28 +429,30 @@ export default function Studio() {
 
                 {/* AI Video */}
                 <button
-                  onClick={() => isPro ? setMediaMode("video-ai") : null}
+                  onClick={() => setMediaMode("video-ai")}
                   data-testid="media-type-video-ai"
                   className={`relative flex flex-col items-center gap-3 p-5 rounded-xl border-2 transition-all ${
-                    mediaMode === "video-ai" ? "border-primary bg-primary/5 shadow-md"
-                    : isPro ? "border-border/50 hover:border-primary/40 bg-background"
-                    : "border-border/40 bg-muted/20 cursor-not-allowed opacity-60"
+                    mediaMode === "video-ai"
+                      ? "border-indigo-500 bg-indigo-500/5 shadow-md shadow-indigo-500/10"
+                      : "border-border/50 hover:border-indigo-400/50 bg-background"
                   }`}
                 >
-                  {!isPro && <ProBadge />}
-                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${mediaMode === "video-ai" ? "bg-gradient-to-br from-purple-500 to-indigo-500 text-white" : "bg-muted text-muted-foreground"}`}>
+                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${mediaMode === "video-ai" ? "bg-gradient-to-br from-purple-500 to-indigo-500 text-white shadow-lg shadow-indigo-500/30" : "bg-muted text-muted-foreground"}`}>
                     <Film className="w-6 h-6" />
                   </div>
                   <div className="text-center">
                     <p className="font-bold text-sm">{t.studio.generateAiVideo}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">MP4 with Ken Burns effect</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">Real MP4 · Ken Burns</p>
                   </div>
-                  {mediaMode === "video-ai" && <CheckCircle2 className="w-4 h-4 text-primary" />}
+                  {mediaMode === "video-ai" && <CheckCircle2 className="w-4 h-4 text-indigo-500" />}
                 </button>
               </div>
 
-              {!isPro && (
-                <UpgradeBanner message={t.studio.proFeatureDesc} ctaLabel={t.studio.upgradeToPro} />
+              {mediaMode === "video-ai" && (
+                <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-indigo-500/10 border border-indigo-500/20">
+                  <Sparkles className="w-4 h-4 text-indigo-400 shrink-0" />
+                  <p className="text-xs text-indigo-300">AI generates a professional ad image → FFmpeg renders it to a real 9-second MP4 with zoom animation + text overlays</p>
+                </div>
               )}
             </div>
 

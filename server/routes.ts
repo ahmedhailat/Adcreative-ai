@@ -6,7 +6,7 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import os from "os";
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { promisify } from "util";
 import { storage } from "./storage";
 import { stripe } from "./stripeClient";
@@ -15,9 +15,9 @@ import { api } from "@shared/routes";
 import { AD_FORMATS } from "@shared/schema";
 import { z } from "zod";
 
-const execAsync = promisify(exec);
-const FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
-const FONT_REG  = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+const execFileAsync = promisify(execFile);
+const FFMPEG_BIN  = "/nix/store/inqkj79vydizl6ja0d8af99qlxbmyr84-replit-runtime-path/bin/ffmpeg";
+const FONT_BOLD   = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
 
 // Multer setup — store video uploads in /tmp/uploads
 const uploadDir = "/tmp/uploads";
@@ -135,14 +135,16 @@ Create a visually stunning, professional advertisement image with:
   return `data:${mimeType};base64,${imagePart.inlineData.data}`;
 }
 
-function escapeFFmpegText(text: string): string {
+// Build a safe FFmpeg drawtext value — no shell, uses execFile arg array
+function ffText(text: string): string {
+  // FFmpeg drawtext text= escaping (no shell quoting needed since we use execFile)
   return text
     .replace(/\\/g, "\\\\")
-    .replace(/'/g, "\\'")
-    .replace(/:/g, "\\:")
+    .replace(/:/g,  "\\:")
+    .replace(/'/g,  "\u2019")   // replace smart quote to avoid filter parsing issues
     .replace(/\[/g, "\\[")
     .replace(/\]/g, "\\]")
-    .slice(0, 60);
+    .slice(0, 55);
 }
 
 async function generateAdVideo(params: {
@@ -156,39 +158,66 @@ async function generateAdVideo(params: {
   const inputPath  = path.join(tmpDir, `ad_img_${id}.png`);
   const outputPath = path.join(tmpDir, `ad_vid_${id}.mp4`);
 
-  const base64Raw = params.imageData.replace(/^data:image\/\w+;base64,/, "");
+  console.log("[video] Starting video generation for", params.headline);
+
+  // Write image to disk
+  const base64Raw = params.imageData.replace(/^data:image\/[\w+]+;base64,/, "");
   fs.writeFileSync(inputPath, Buffer.from(base64Raw, "base64"));
+  console.log("[video] Image written:", fs.statSync(inputPath).size, "bytes");
 
   const hex = params.primaryColor.replace("#", "").padEnd(6, "0").slice(0, 6);
   const overlayColor = `0x${hex}DD`;
+  const headline = ffText(params.headline);
+  const cta      = ffText(params.cta);
 
-  const headline = escapeFFmpegText(params.headline);
-  const cta      = escapeFFmpegText(params.cta);
-
+  // Build filter_complex as a single string — using execFile so NO shell quoting needed
+  // Single quotes inside are fine since execFile bypasses the shell entirely
   const vf = [
-    // 1. Fit + pad image to 1080x1080
     "scale=1080:1080:force_original_aspect_ratio=decrease",
     "pad=1080:1080:(ow-iw)/2:(oh-ih)/2:color=black",
-    // 2. Ken Burns slow zoom
     "zoompan=z='min(zoom+0.0008,1.25)':d=225:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1080:fps=25",
-    // 3. Headline text — fades in at t=0.8s
-    `drawtext=fontfile=${FONT_BOLD}:text='${headline}':x=(w-tw)/2:y=h*0.72:fontsize=46:fontcolor=white:shadowcolor=black@0.7:shadowx=2:shadowy=2:alpha='if(lt(t\\,0.8)\\,0\\,if(lt(t\\,1.8)\\,(t-0.8)/1.0\\,1))'`,
-    // 4. CTA pill — fades in at t=1.8s
-    `drawtext=fontfile=${FONT_BOLD}:text='  ${cta}  ':x=(w-tw)/2:y=h*0.84:fontsize=34:fontcolor=white:box=1:boxcolor=${overlayColor}:boxborderw=18:alpha='if(lt(t\\,1.8)\\,0\\,if(lt(t\\,2.8)\\,(t-1.8)/1.0\\,1))'`,
-    // 5. Fade in + fade out
+    `drawtext=fontfile=${FONT_BOLD}:text='${headline}':x=(w-tw)/2:y=h*0.72:fontsize=46:fontcolor=white:shadowcolor=black@0.8:shadowx=2:shadowy=2:alpha='if(lt(t,0.8),0,if(lt(t,1.8),(t-0.8)/1.0,1))'`,
+    `drawtext=fontfile=${FONT_BOLD}:text='  ${cta}  ':x=(w-tw)/2:y=h*0.86:fontsize=34:fontcolor=white:box=1:boxcolor=${overlayColor}:boxborderw=18:alpha='if(lt(t,1.8),0,if(lt(t,2.8),(t-1.8)/1.0,1))'`,
     "fade=t=in:st=0:d=0.8",
     "fade=t=out:st=8.2:d=0.8",
   ].join(",");
 
-  const cmd = `ffmpeg -y -loop 1 -i "${inputPath}" -vf "${vf}" -t 9 -r 25 -c:v libx264 -pix_fmt yuv420p -preset fast -crf 22 -movflags +faststart "${outputPath}"`;
+  // execFile bypasses the shell — args are passed directly to ffmpeg
+  const args = [
+    "-y",
+    "-loop", "1",
+    "-i", inputPath,
+    "-vf", vf,
+    "-t", "9",
+    "-r", "25",
+    "-c:v", "libx264",
+    "-pix_fmt", "yuv420p",
+    "-preset", "fast",
+    "-crf", "22",
+    "-movflags", "+faststart",
+    outputPath,
+  ];
 
   try {
-    await execAsync(cmd, { timeout: 120_000 });
+    console.log("[video] Running FFmpeg with", args.length, "args...");
+    await execFileAsync(FFMPEG_BIN, args, {
+      timeout: 180_000,
+      maxBuffer: 50 * 1024 * 1024,
+    });
+
+    if (!fs.existsSync(outputPath)) {
+      throw new Error("FFmpeg finished but output file not found");
+    }
     const buf = fs.readFileSync(outputPath);
+    console.log("[video] Done! Video size:", buf.length, "bytes");
     return `data:video/mp4;base64,${buf.toString("base64")}`;
+  } catch (err: any) {
+    console.error("[video] FFmpeg failed:", err?.message);
+    console.error("[video] stderr:", err?.stderr?.slice?.(0, 800) ?? "none");
+    throw err;
   } finally {
     try { fs.unlinkSync(inputPath); } catch {}
-    try { fs.unlinkSync(outputPath); } catch {}
+    try { if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch {}
   }
 }
 
@@ -534,6 +563,53 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (err: any) {
       console.error("Video upload failed:", err);
       res.status(500).json({ message: err.message || "Video upload failed" });
+    }
+  });
+
+  // ===== VIDEO TEST ENDPOINT =====
+  app.get("/api/test-video", async (_req, res) => {
+    try {
+      const id = `${Date.now()}`;
+      const tmpDir = os.tmpdir();
+      const inputPath  = path.join(tmpDir, `tv_in_${id}.png`);
+      const outputPath = path.join(tmpDir, `tv_out_${id}.mp4`);
+
+      // Create a gradient test image using ffmpeg's built-in sources
+      await execFileAsync(FFMPEG_BIN, [
+        "-y", "-f", "lavfi",
+        "-i", "color=6366f1:size=1080x1080:duration=1",
+        "-vframes", "1", inputPath,
+      ], { timeout: 15000, maxBuffer: 10 * 1024 * 1024 });
+
+      const vf = [
+        "scale=1080:1080:force_original_aspect_ratio=decrease",
+        "pad=1080:1080:(ow-iw)/2:(oh-ih)/2:color=black",
+        "zoompan=z='min(zoom+0.0008,1.25)':d=225:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1080:fps=25",
+        `drawtext=fontfile=${FONT_BOLD}:text='Ad Creative Test':x=(w-tw)/2:y=h*0.72:fontsize=54:fontcolor=white:shadowcolor=black@0.8:shadowx=2:shadowy=2:alpha='if(lt(t,0.8),0,if(lt(t,1.8),(t-0.8)/1.0,1))'`,
+        `drawtext=fontfile=${FONT_BOLD}:text='  Buy Now  ':x=(w-tw)/2:y=h*0.86:fontsize=38:fontcolor=white:box=1:boxcolor=0x6366f1DD:boxborderw=20:alpha='if(lt(t,1.8),0,if(lt(t,2.8),(t-1.8)/1.0,1))'`,
+        "fade=t=in:st=0:d=0.8",
+        "fade=t=out:st=8.2:d=0.8",
+      ].join(",");
+
+      await execFileAsync(FFMPEG_BIN, [
+        "-y", "-loop", "1", "-i", inputPath,
+        "-vf", vf,
+        "-t", "9", "-r", "25",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        "-preset", "fast", "-crf", "22", "-movflags", "+faststart",
+        outputPath,
+      ], { timeout: 120000, maxBuffer: 50 * 1024 * 1024 });
+
+      const buf = fs.readFileSync(outputPath);
+      try { fs.unlinkSync(inputPath); } catch {}
+      try { fs.unlinkSync(outputPath); } catch {}
+
+      res.setHeader("Content-Type", "video/mp4");
+      res.setHeader("Content-Disposition", 'inline; filename="test.mp4"');
+      res.send(buf);
+    } catch (err: any) {
+      console.error("[test-video] error:", err?.message);
+      res.status(500).json({ error: err?.message, stderr: err?.stderr?.slice?.(0, 500) });
     }
   });
 
