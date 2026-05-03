@@ -3,6 +3,7 @@ import { useLocation } from "wouter";
 import { AD_FORMATS, type GenerateCreativeInput } from "@shared/schema";
 import { useBrands } from "@/hooks/use-brands";
 import { useGenerateCreative, useCreative } from "@/hooks/use-creatives";
+import { useLang } from "@/contexts/LangContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -32,11 +33,10 @@ const PLATFORM_COLORS: Record<string, string> = {
   twitter: "#1da1f2",
 };
 
-const STEP_LABELS = ["Brand & Format", "Product Details", "Result"];
-
 export default function Studio() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { t } = useLang();
   const { data: brands, isLoading: brandsLoading } = useBrands();
   const generateCreative = useGenerateCreative();
 
@@ -48,26 +48,28 @@ export default function Studio() {
     goal: "awareness"
   });
 
+  const STEP_LABELS = [t.studio.step1, t.studio.step2, t.studio.step3];
+
   const handleNext = () => {
     if (step === 1) {
       if (!formData.brandId && !formData.formatSize) {
-        toast({ title: "Select a brand and ad format to continue", description: "Choose a brand from the grid above, then pick an ad format.", variant: "destructive" });
+        toast({ title: t.studio.selectBrandAndFormat, description: t.studio.selectBrandAndFormatDesc, variant: "destructive" });
         return;
       }
       if (!formData.brandId) {
-        toast({ title: "Select a brand first", description: "Click one of the brand cards above to select it.", variant: "destructive" });
+        toast({ title: t.studio.selectBrandFirst, description: t.studio.selectBrandFirstDesc, variant: "destructive" });
         return;
       }
       if (!formData.formatSize) {
-        toast({ title: "Select an ad format", description: "Choose a platform format (e.g. Instagram Post, Facebook Ad) below the brand section.", variant: "destructive" });
+        toast({ title: t.studio.selectAdFormat, description: t.studio.selectAdFormatDesc, variant: "destructive" });
         return;
       }
     }
     if (step === 2 && (!formData.productName || !formData.productDescription)) {
       if (!formData.productName) {
-        toast({ title: "Product name is required", description: "Enter the name of what you're advertising.", variant: "destructive" });
+        toast({ title: t.studio.productNameRequired, description: t.studio.productNameRequiredDesc, variant: "destructive" });
       } else {
-        toast({ title: "Product description is required", description: "Describe your product's key benefits so the AI can write compelling copy.", variant: "destructive" });
+        toast({ title: t.studio.productDescRequired, description: t.studio.productDescRequiredDesc, variant: "destructive" });
       }
       return;
     }
@@ -87,7 +89,7 @@ export default function Studio() {
       setGeneratingId(created.id);
       setStep(3);
     } catch (e: any) {
-      toast({ title: "Generation failed", description: e.message, variant: "destructive" });
+      toast({ title: t.studio.generationFailed, description: e.message, variant: "destructive" });
     }
   };
 
@@ -115,9 +117,9 @@ export default function Studio() {
           <Sparkles className="w-4 h-4" />
           AI Creative Studio
         </div>
-        <h1 className="text-4xl font-extrabold text-foreground">Generate Your Ad Creative</h1>
+        <h1 className="text-4xl font-extrabold text-foreground">{t.studio.title}</h1>
         <p className="text-muted-foreground text-lg max-w-2xl mx-auto">
-          Three simple steps. Powered by Gemini AI.
+          {t.studio.subtitle}
         </p>
       </div>
 
@@ -158,12 +160,12 @@ export default function Studio() {
                 <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
                   <span className="text-primary font-bold text-sm">1</span>
                 </div>
-                <h2 className="text-xl font-bold">Select Your Brand</h2>
+                <h2 className="text-xl font-bold">{t.studio.selectBrand}</h2>
                 {!formData.brandId && (
-                  <span className="ml-auto text-xs font-semibold text-muted-foreground bg-muted px-2.5 py-1 rounded-full">← pick one</span>
+                  <span className="ms-auto text-xs font-semibold text-muted-foreground bg-muted px-2.5 py-1 rounded-full">{t.studio.pickOne}</span>
                 )}
                 {formData.brandId && (
-                  <CheckCircle2 className="ml-auto w-5 h-5 text-green-500" />
+                  <CheckCircle2 className="ms-auto w-5 h-5 text-green-500" />
                 )}
               </div>
 
@@ -175,11 +177,11 @@ export default function Studio() {
                 <div className="flex items-center gap-4 p-4 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-xl border border-amber-500/20">
                   <AlertCircle className="w-5 h-5 shrink-0" />
                   <div className="flex-1">
-                    <p className="font-medium">No brands yet</p>
-                    <p className="text-sm opacity-80">Create a brand first before generating creatives.</p>
+                    <p className="font-medium">{t.studio.noBrandsYet}</p>
+                    <p className="text-sm opacity-80">{t.studio.noBrandsDesc}</p>
                   </div>
                   <Button size="sm" variant="outline" onClick={() => setLocation('/brands')} className="shrink-0 border-amber-500/30 text-amber-600 dark:text-amber-400">
-                    Add Brand
+                    {t.studio.addBrand}
                   </Button>
                 </div>
               ) : (
@@ -204,7 +206,7 @@ export default function Studio() {
                         <p className="text-xs text-muted-foreground truncate">{brand.industry}</p>
                       </div>
                       {formData.brandId === brand.id && (
-                        <CheckCircle2 className="w-4 h-4 text-primary ml-auto shrink-0" />
+                        <CheckCircle2 className="w-4 h-4 text-primary ms-auto shrink-0" />
                       )}
                     </button>
                   ))}
@@ -217,12 +219,12 @@ export default function Studio() {
                 <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
                   <span className="text-primary font-bold text-sm">2</span>
                 </div>
-                <h2 className="text-xl font-bold">Select Ad Format</h2>
+                <h2 className="text-xl font-bold">{t.studio.selectFormat}</h2>
                 {!formData.formatSize && (
-                  <span className="ml-auto text-xs font-semibold text-muted-foreground bg-muted px-2.5 py-1 rounded-full">← pick one</span>
+                  <span className="ms-auto text-xs font-semibold text-muted-foreground bg-muted px-2.5 py-1 rounded-full">{t.studio.pickOne}</span>
                 )}
                 {formData.formatSize && (
-                  <CheckCircle2 className="ml-auto w-5 h-5 text-green-500" />
+                  <CheckCircle2 className="ms-auto w-5 h-5 text-green-500" />
                 )}
               </div>
 
@@ -266,7 +268,7 @@ export default function Studio() {
                 data-testid="button-next-step1"
                 className="h-12 px-8 rounded-xl shadow-lg shadow-primary/20"
               >
-                Continue <ArrowRight className="ml-2 w-4 h-4" />
+                {t.studio.continueBtn} <ArrowRight className="ms-2 w-4 h-4" />
               </Button>
             </div>
           </motion.div>
@@ -277,15 +279,15 @@ export default function Studio() {
           <motion.div key="step2" initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }}>
             <div className="glass-card rounded-2xl p-6 space-y-6">
               <div className="flex items-center gap-3 pb-2 border-b border-border/50">
-                <Button variant="ghost" size="icon" onClick={() => setStep(1)} className="rounded-lg h-8 w-8 -ml-1">
+                <Button variant="ghost" size="icon" onClick={() => setStep(1)} className="rounded-lg h-8 w-8 -ms-1">
                   <ArrowLeft className="w-4 h-4" />
                 </Button>
-                <h2 className="text-xl font-bold">Describe Your Product</h2>
+                <h2 className="text-xl font-bold">{t.studio.describeProduct}</h2>
               </div>
 
               <div className="space-y-5 max-w-2xl">
                 <div className="space-y-2">
-                  <Label className="text-sm font-semibold">Creative Title <span className="text-muted-foreground font-normal">(optional — auto-generated if blank)</span></Label>
+                  <Label className="text-sm font-semibold">{t.studio.creativeTitle} <span className="text-muted-foreground font-normal">{t.studio.creativeTitleHint}</span></Label>
                   <Input
                     data-testid="input-creative-title"
                     placeholder={`e.g. ${formData.productName || "My Product"} – ${formData.formatName || "Instagram Post"}`}
@@ -297,10 +299,10 @@ export default function Studio() {
 
                 <div className="grid sm:grid-cols-2 gap-5">
                   <div className="space-y-2">
-                    <Label className="text-sm font-semibold">Product / Service Name <span className="text-destructive">*</span></Label>
+                    <Label className="text-sm font-semibold">{t.studio.productName} <span className="text-destructive">*</span></Label>
                     <Input
                       data-testid="input-product-name"
-                      placeholder="What are you advertising?"
+                      placeholder={t.studio.productNamePlaceholder}
                       value={formData.productName || ""}
                       onChange={e => setFormData({...formData, productName: e.target.value})}
                       className="h-12 rounded-xl"
@@ -308,27 +310,27 @@ export default function Studio() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label className="text-sm font-semibold">Campaign Goal</Label>
+                    <Label className="text-sm font-semibold">{t.studio.campaignGoal}</Label>
                     <Select value={formData.goal} onValueChange={v => setFormData({...formData, goal: v})}>
                       <SelectTrigger className="h-12 rounded-xl" data-testid="select-campaign-goal">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="awareness">🎯 Brand Awareness</SelectItem>
-                        <SelectItem value="traffic">🚀 Drive Traffic</SelectItem>
-                        <SelectItem value="leads">📋 Generate Leads</SelectItem>
-                        <SelectItem value="sales">💰 Boost Sales</SelectItem>
-                        <SelectItem value="engagement">❤️ Increase Engagement</SelectItem>
+                        <SelectItem value="awareness">{t.studio.goals.awareness}</SelectItem>
+                        <SelectItem value="traffic">{t.studio.goals.traffic}</SelectItem>
+                        <SelectItem value="leads">{t.studio.goals.leads}</SelectItem>
+                        <SelectItem value="sales">{t.studio.goals.sales}</SelectItem>
+                        <SelectItem value="engagement">{t.studio.goals.engagement}</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                 </div>
 
                 <div className="space-y-2">
-                  <Label className="text-sm font-semibold">Product Description & Key Benefits <span className="text-destructive">*</span></Label>
+                  <Label className="text-sm font-semibold">{t.studio.productDesc} <span className="text-destructive">*</span></Label>
                   <Textarea
                     data-testid="input-product-description"
-                    placeholder="Describe main benefits, unique selling points, and why customers should choose this product..."
+                    placeholder={t.studio.productDescPlaceholder}
                     value={formData.productDescription || ""}
                     onChange={e => setFormData({...formData, productDescription: e.target.value})}
                     className="min-h-[120px] rounded-xl resize-none"
@@ -336,10 +338,10 @@ export default function Studio() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label className="text-sm font-semibold">Target Audience <span className="text-muted-foreground font-normal">(optional)</span></Label>
+                  <Label className="text-sm font-semibold">{t.studio.targetAudience} <span className="text-muted-foreground font-normal">{t.studio.targetAudienceHint}</span></Label>
                   <Input
                     data-testid="input-target-audience"
-                    placeholder="e.g. Millennials aged 25–35 interested in fitness and wellness"
+                    placeholder={t.studio.targetAudiencePlaceholder}
                     value={formData.targetAudience || ""}
                     onChange={e => setFormData({...formData, targetAudience: e.target.value})}
                     className="h-12 rounded-xl"
@@ -348,7 +350,7 @@ export default function Studio() {
 
                 <div className="pt-2 border-t border-border/50 flex gap-3">
                   <Button variant="outline" onClick={() => setStep(1)} className="h-12 px-6 rounded-xl">
-                    <ArrowLeft className="w-4 h-4 mr-2" /> Back
+                    <ArrowLeft className="w-4 h-4 me-2" /> {t.studio.backBtn}
                   </Button>
                   <Button
                     size="lg"
@@ -358,8 +360,8 @@ export default function Studio() {
                     className="flex-1 h-12 rounded-xl shadow-lg shadow-primary/25 bg-gradient-to-r from-primary to-purple-500 hover:opacity-90"
                   >
                     {generateCreative.isPending
-                      ? <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Starting…</>
-                      : <><Sparkles className="w-4 h-4 mr-2" /> Generate Creative</>
+                      ? <><Loader2 className="w-4 h-4 animate-spin me-2" /> {t.studio.starting}</>
+                      : <><Sparkles className="w-4 h-4 me-2" /> {t.studio.generateBtn}</>
                     }
                   </Button>
                 </div>
@@ -380,11 +382,11 @@ export default function Studio() {
                   <div className="absolute -inset-3 bg-primary/5 rounded-full blur-xl animate-pulse" />
                 </div>
                 <div>
-                  <h3 className="text-2xl font-bold mb-2">Gemini AI is crafting your creative</h3>
-                  <p className="text-muted-foreground">Analyzing brand, writing copy, generating image…</p>
+                  <h3 className="text-2xl font-bold mb-2">{t.studio.generatingTitle}</h3>
+                  <p className="text-muted-foreground">{t.studio.generatingSubtitle}</p>
                 </div>
                 <div className="w-full max-w-sm space-y-3">
-                  {["Writing ad copy", "Generating image", "Finalizing creative"].map((label, i) => (
+                  {[t.studio.writingCopy, t.studio.generatingImage, t.studio.finalizing].map((label, i) => (
                     <div key={label} className="flex items-center gap-3 text-sm text-muted-foreground">
                       <div className="w-5 h-5 rounded-full border-2 border-primary/30 flex items-center justify-center">
                         <Loader2 className="w-3 h-3 text-primary animate-spin" style={{ animationDelay: `${i * 0.3}s` }} />
@@ -399,11 +401,11 @@ export default function Studio() {
                 <div className="w-16 h-16 bg-destructive/10 rounded-full flex items-center justify-center mx-auto">
                   <AlertCircle className="w-8 h-8 text-destructive" />
                 </div>
-                <h3 className="text-2xl font-bold">Generation Failed</h3>
-                <p className="text-muted-foreground max-w-md mx-auto">Something went wrong during generation. This may be a temporary issue with the AI service.</p>
+                <h3 className="text-2xl font-bold">{t.studio.failed}</h3>
+                <p className="text-muted-foreground max-w-md mx-auto">{t.studio.failedDesc}</p>
                 <div className="flex gap-3 justify-center pt-2">
-                  <Button onClick={() => setStep(2)} variant="outline" className="rounded-xl">Try Again</Button>
-                  <Button onClick={handleCreateAnother} className="rounded-xl">New Creative</Button>
+                  <Button onClick={() => setStep(2)} variant="outline" className="rounded-xl">{t.studio.tryAgain}</Button>
+                  <Button onClick={handleCreateAnother} className="rounded-xl">{t.studio.newCreative}</Button>
                 </div>
               </div>
             ) : (
@@ -419,7 +421,7 @@ export default function Studio() {
                       )}
                       <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                         <Button variant="secondary" className="rounded-full shadow-2xl" onClick={handleDownload} data-testid="button-download-hover">
-                          <Download className="w-4 h-4 mr-2" /> Download
+                          <Download className="w-4 h-4 me-2" /> {t.studio.downloadImage}
                         </Button>
                       </div>
                     </div>
@@ -427,15 +429,15 @@ export default function Studio() {
 
                   <div className="flex gap-3">
                     <Button className="flex-1 h-11 rounded-xl shadow-md" onClick={handleDownload} data-testid="button-download-image">
-                      <Download className="w-4 h-4 mr-2" /> Download Image
+                      <Download className="w-4 h-4 me-2" /> {t.studio.downloadImage}
                     </Button>
                     <Button variant="outline" className="flex-1 h-11 rounded-xl" onClick={() => setLocation('/library')}>
-                      <Library className="w-4 h-4 mr-2" /> View Library
+                      <Library className="w-4 h-4 me-2" /> {t.studio.viewLibrary}
                     </Button>
                   </div>
 
                   <Button variant="ghost" className="w-full h-11 rounded-xl border border-dashed border-border" onClick={handleCreateAnother} data-testid="button-create-another">
-                    <Sparkles className="w-4 h-4 mr-2" /> Create Another
+                    <Sparkles className="w-4 h-4 me-2" /> {t.studio.createAnother}
                   </Button>
                 </div>
 
@@ -464,21 +466,21 @@ export default function Studio() {
                             {resultCreative.performanceScore || 80}
                           </span>
                         </div>
-                        <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider mt-1">Score</span>
+                        <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider mt-1">{t.studio.score}</span>
                       </div>
                     </div>
 
                     <div className="space-y-3">
                       <div className="bg-background/50 rounded-xl p-4 border border-border/50">
-                        <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1.5">Headline</p>
+                        <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1.5">{t.studio.headline}</p>
                         <p className="font-bold text-base">{(resultCreative.adCopy as any)?.headline}</p>
                       </div>
                       <div className="bg-background/50 rounded-xl p-4 border border-border/50">
-                        <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1.5">Body Copy</p>
+                        <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1.5">{t.studio.bodyCopy}</p>
                         <p className="text-sm leading-relaxed">{(resultCreative.adCopy as any)?.description}</p>
                       </div>
                       <div className="bg-background/50 rounded-xl p-4 border border-border/50">
-                        <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1.5">Call to Action</p>
+                        <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1.5">{t.studio.callToAction}</p>
                         <span className="inline-block px-4 py-2 bg-primary text-primary-foreground font-bold rounded-lg text-sm">
                           {(resultCreative.adCopy as any)?.cta}
                         </span>
@@ -487,11 +489,11 @@ export default function Studio() {
                   </div>
 
                   <div className="glass-card rounded-2xl p-4">
-                    <p className="text-xs text-muted-foreground mb-3 font-semibold uppercase tracking-wider">Performance Breakdown</p>
+                    <p className="text-xs text-muted-foreground mb-3 font-semibold uppercase tracking-wider">{t.studio.performanceBreakdown}</p>
                     {[
-                      { label: "Headline Impact", val: 88 },
-                      { label: "Copy Clarity", val: 92 },
-                      { label: "CTA Strength", val: 85 },
+                      { label: t.studio.headlineImpact, val: 88 },
+                      { label: t.studio.copyCl, val: 92 },
+                      { label: t.studio.ctaStrength, val: 85 },
                     ].map(({ label, val }) => (
                       <div key={label} className="mb-3">
                         <div className="flex justify-between text-xs mb-1">

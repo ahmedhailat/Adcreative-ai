@@ -13,10 +13,12 @@ import Studio from "@/pages/Studio";
 import Library from "@/pages/Library";
 import Login from "@/pages/Login";
 import { useAuth } from "@/hooks/use-auth";
+import { LangProvider, useLang } from "@/contexts/LangContext";
 import { Loader2 } from "lucide-react";
 
 function ProtectedRouter() {
   const { isAuthenticated, isLoading } = useAuth();
+  const { t } = useLang();
   const [, setLocation] = useLocation();
 
   useEffect(() => {
@@ -32,7 +34,7 @@ function ProtectedRouter() {
           <div className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center shadow-lg shadow-primary/30">
             <Loader2 className="w-6 h-6 animate-spin text-primary-foreground" />
           </div>
-          <p className="text-muted-foreground text-sm font-medium">Loading your workspace…</p>
+          <p className="text-muted-foreground text-sm font-medium">{t.common.loading}</p>
         </div>
       </div>
     );
@@ -87,10 +89,12 @@ function App() {
   return (
     <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
       <QueryClientProvider client={queryClient}>
-        <TooltipProvider>
-          <Toaster />
-          <Router />
-        </TooltipProvider>
+        <LangProvider>
+          <TooltipProvider>
+            <Toaster />
+            <Router />
+          </TooltipProvider>
+        </LangProvider>
       </QueryClientProvider>
     </ThemeProvider>
   );

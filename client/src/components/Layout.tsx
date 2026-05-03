@@ -12,8 +12,9 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { LayoutDashboard, Palette, Wand2, Images, LogOut, ChevronDown, User } from "lucide-react";
+import { LayoutDashboard, Palette, Wand2, Images, LogOut, ChevronDown, User, Languages, Check } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
+import { useLang, type Lang } from "@/contexts/LangContext";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -22,15 +23,46 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-const navItems = [
-  { title: "Dashboard", url: "/", icon: LayoutDashboard },
-  { title: "Brands", url: "/brands", icon: Palette },
-  { title: "Creative Studio", url: "/studio", icon: Wand2 },
-  { title: "Library", url: "/library", icon: Images },
-];
+function LangToggle() {
+  const { lang, setLang } = useLang();
+
+  const options: { value: Lang; label: string; native: string }[] = [
+    { value: "en", label: "English", native: "English" },
+    { value: "ar", label: "Arabic", native: "العربية" },
+  ];
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          data-testid="button-lang-toggle"
+          className="flex items-center gap-1.5 h-9 px-3 rounded-lg border border-border/60 bg-background/50 hover:bg-accent text-sm font-semibold transition-colors"
+          title="Switch language / تغيير اللغة"
+        >
+          <Languages className="w-4 h-4 text-muted-foreground" />
+          <span className="text-foreground">{lang === "ar" ? "ع" : "EN"}</span>
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-44">
+        {options.map((opt) => (
+          <DropdownMenuItem
+            key={opt.value}
+            onClick={() => setLang(opt.value)}
+            className="flex items-center justify-between cursor-pointer"
+            data-testid={`lang-option-${opt.value}`}
+          >
+            <span>{opt.native}</span>
+            {lang === opt.value && <Check className="w-4 h-4 text-primary" />}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 function UserMenu() {
   const { user, logout, isLoggingOut } = useAuth();
+  const { t } = useLang();
   if (!user) return null;
 
   const initials = user.name
@@ -65,7 +97,7 @@ function UserMenu() {
         <DropdownMenuSeparator />
         <DropdownMenuItem className="gap-2 cursor-pointer">
           <User className="w-4 h-4" />
-          Profile
+          {t.layout.profile}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem
@@ -75,7 +107,7 @@ function UserMenu() {
           data-testid="button-logout"
         >
           <LogOut className="w-4 h-4" />
-          {isLoggingOut ? "Signing out…" : "Sign Out"}
+          {isLoggingOut ? t.layout.signingOut : t.layout.signOut}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -84,6 +116,14 @@ function UserMenu() {
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
+  const { t } = useLang();
+
+  const navItems = [
+    { title: t.nav.dashboard, url: "/", icon: LayoutDashboard },
+    { title: t.nav.brands, url: "/brands", icon: Palette },
+    { title: t.nav.studio, url: "/studio", icon: Wand2 },
+    { title: t.nav.library, url: "/library", icon: Images },
+  ];
 
   const style = {
     "--sidebar-width": "16rem",
@@ -100,22 +140,22 @@ export function Layout({ children }: { children: React.ReactNode }) {
               <Wand2 className="w-4 h-4 text-primary-foreground" />
             </div>
             <div>
-              <span className="font-bold text-sm text-sidebar-foreground leading-none">AdCreative</span>
-              <span className="block text-[10px] text-primary font-semibold leading-none mt-0.5">AI Platform</span>
+              <span className="font-bold text-sm text-sidebar-foreground leading-none">{t.layout.appName}</span>
+              <span className="block text-[10px] text-primary font-semibold leading-none mt-0.5">{t.layout.aiPlatform}</span>
             </div>
           </div>
 
           <SidebarContent className="flex flex-col justify-between h-full">
             <SidebarGroup>
-              <SidebarGroupLabel>Navigation</SidebarGroupLabel>
+              <SidebarGroupLabel>{t.nav.navigation}</SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
                   {navItems.map((item) => (
-                    <SidebarMenuItem key={item.title}>
+                    <SidebarMenuItem key={item.url}>
                       <SidebarMenuButton
                         asChild
                         isActive={location === item.url}
-                        data-testid={`nav-${item.title.toLowerCase().replace(" ", "-")}`}
+                        data-testid={`nav-${item.url.replace("/", "") || "dashboard"}`}
                       >
                         <Link href={item.url}>
                           <item.icon className="w-4 h-4" />
@@ -139,6 +179,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <header className="flex items-center justify-between px-4 py-3 border-b border-border bg-background sticky top-0 z-50">
             <SidebarTrigger data-testid="button-sidebar-toggle" />
             <div className="flex items-center gap-2">
+              <LangToggle />
               <ThemeToggle />
             </div>
           </header>

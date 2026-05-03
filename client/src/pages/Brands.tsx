@@ -8,12 +8,14 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Trash2, Globe, Building2, Type, PaintBucket, Loader2, Palette, Sparkles, Wand2 } from "lucide-react";
+import { useLang } from "@/contexts/LangContext";
+import { Plus, Trash2, Globe, Building2, Type, PaintBucket, Loader2, Palette, Wand2 } from "lucide-react";
 import { motion } from "framer-motion";
 import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 
 export default function Brands() {
+  const { t } = useLang();
   const { data: brands, isLoading } = useBrands();
   const createBrand = useCreateBrand();
   const deleteBrand = useDeleteBrand();
@@ -34,12 +36,15 @@ export default function Brands() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name.trim()) {
-      toast({ title: "Brand name is required", variant: "destructive" });
+      toast({ title: t.brands.brandNameRequired, variant: "destructive" });
       return;
     }
     try {
       await createBrand.mutateAsync(formData);
-      toast({ title: "Brand created!", description: `${formData.name} is ready for creative generation.` });
+      toast({
+        title: t.brands.brandCreated,
+        description: t.brands.brandCreatedDesc.replace("{name}", formData.name),
+      });
       setOpen(false);
       setFormData({
         name: "",
@@ -52,17 +57,17 @@ export default function Brands() {
         logoUrl: null,
       });
     } catch (err: any) {
-      toast({ title: "Failed to create brand", description: err.message, variant: "destructive" });
+      toast({ title: t.brands.failedCreate, description: err.message, variant: "destructive" });
     }
   };
 
   const handleDelete = async (brand: any) => {
-    if (!confirm(`Delete "${brand.name}"? This will also delete all creatives for this brand.`)) return;
+    if (!confirm(t.brands.deleteConfirm.replace('"{name}"', `"${brand.name}"`))) return;
     try {
       await deleteBrand.mutateAsync(brand.id);
-      toast({ title: "Brand deleted" });
+      toast({ title: t.brands.brandDeleted });
     } catch (err: any) {
-      toast({ title: "Failed to delete brand", description: err.message, variant: "destructive" });
+      toast({ title: t.brands.failedDelete, description: err.message, variant: "destructive" });
     }
   };
 
@@ -71,27 +76,27 @@ export default function Brands() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-extrabold text-foreground">Brand Management</h1>
-          <p className="text-muted-foreground mt-1">Manage your brand kits for on-brand AI generation.</p>
+          <h1 className="text-3xl font-extrabold text-foreground">{t.brands.title}</h1>
+          <p className="text-muted-foreground mt-1">{t.brands.subtitle}</p>
         </div>
 
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
             <Button className="h-11 px-6 rounded-xl shadow-lg shadow-primary/20" data-testid="button-add-brand">
-              <Plus className="w-4 h-4 mr-2" /> Add Brand
+              <Plus className="w-4 h-4 me-2" /> {t.brands.addBrand}
             </Button>
           </DialogTrigger>
           <DialogContent className="sm:max-w-lg rounded-2xl">
             <DialogHeader>
               <DialogTitle className="text-xl font-bold flex items-center gap-2">
                 <Palette className="w-5 h-5 text-primary" />
-                Create Brand Kit
+                {t.brands.createBrandKit}
               </DialogTitle>
             </DialogHeader>
 
             <form onSubmit={handleSubmit} className="space-y-5 mt-2">
               <div className="space-y-2">
-                <Label className="font-semibold">Brand Name <span className="text-destructive">*</span></Label>
+                <Label className="font-semibold">{t.brands.brandName} <span className="text-destructive">*</span></Label>
                 <Input
                   required
                   placeholder="e.g. Acme Corp"
@@ -104,7 +109,7 @@ export default function Brands() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label className="font-semibold">Industry</Label>
+                  <Label className="font-semibold">{t.brands.industry}</Label>
                   <Select value={formData.industry} onValueChange={(v) => setFormData({...formData, industry: v})}>
                     <SelectTrigger className="h-11 rounded-xl" data-testid="select-industry">
                       <SelectValue />
@@ -115,7 +120,7 @@ export default function Brands() {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label className="font-semibold">Typography</Label>
+                  <Label className="font-semibold">{t.brands.typography}</Label>
                   <Select value={formData.fontFamily} onValueChange={(v) => setFormData({...formData, fontFamily: v})}>
                     <SelectTrigger className="h-11 rounded-xl" data-testid="select-font">
                       <SelectValue />
@@ -129,7 +134,7 @@ export default function Brands() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label className="font-semibold">Primary Color</Label>
+                  <Label className="font-semibold">{t.brands.primaryColor}</Label>
                   <div className="flex gap-2 items-center">
                     <input
                       type="color"
@@ -141,7 +146,7 @@ export default function Brands() {
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Label className="font-semibold">Secondary Color</Label>
+                  <Label className="font-semibold">{t.brands.secondaryColor}</Label>
                   <div className="flex gap-2 items-center">
                     <input
                       type="color"
@@ -155,7 +160,7 @@ export default function Brands() {
               </div>
 
               <div className="space-y-2">
-                <Label className="font-semibold">Website <span className="text-muted-foreground font-normal">(optional)</span></Label>
+                <Label className="font-semibold">{t.brands.website} <span className="text-muted-foreground font-normal">{t.brands.optional}</span></Label>
                 <Input
                   type="url"
                   placeholder="https://example.com"
@@ -166,7 +171,7 @@ export default function Brands() {
               </div>
 
               <div className="space-y-2">
-                <Label className="font-semibold">Brand Description <span className="text-muted-foreground font-normal">(optional)</span></Label>
+                <Label className="font-semibold">{t.brands.brandDescription} <span className="text-muted-foreground font-normal">{t.brands.optional}</span></Label>
                 <Textarea
                   placeholder="What does this brand do? Who are the customers?"
                   value={formData.description}
@@ -178,7 +183,7 @@ export default function Brands() {
               {/* Preview */}
               {formData.name && (
                 <div className="p-4 rounded-xl border border-border/50 bg-muted/30">
-                  <p className="text-xs text-muted-foreground uppercase font-bold tracking-wider mb-3">Preview</p>
+                  <p className="text-xs text-muted-foreground uppercase font-bold tracking-wider mb-3">{t.brands.preview}</p>
                   <div className="flex items-center gap-3">
                     <div className="w-12 h-12 rounded-xl flex items-center justify-center text-white font-bold text-xl shadow-md"
                          style={{ background: `linear-gradient(135deg, ${formData.primaryColor}, ${formData.secondaryColor})` }}>
@@ -193,10 +198,10 @@ export default function Brands() {
               )}
 
               <DialogFooter>
-                <Button type="button" variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+                <Button type="button" variant="ghost" onClick={() => setOpen(false)}>{t.brands.cancel}</Button>
                 <Button type="submit" disabled={createBrand.isPending} className="px-8 rounded-xl" data-testid="button-save-brand">
-                  {createBrand.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Palette className="w-4 h-4 mr-2" />}
-                  Save Brand
+                  {createBrand.isPending ? <Loader2 className="w-4 h-4 animate-spin me-2" /> : <Palette className="w-4 h-4 me-2" />}
+                  {t.brands.saveBrand}
                 </Button>
               </DialogFooter>
             </form>
@@ -216,10 +221,10 @@ export default function Brands() {
           <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-4">
             <Palette className="w-8 h-8 text-primary" />
           </div>
-          <h3 className="text-xl font-bold mb-2">No brands yet</h3>
-          <p className="text-muted-foreground mb-6 max-w-sm">Create your first brand kit to start generating on-brand AI creatives.</p>
+          <h3 className="text-xl font-bold mb-2">{t.brands.noBrandsYet}</h3>
+          <p className="text-muted-foreground mb-6 max-w-sm">{t.brands.noBrandsDesc}</p>
           <Button onClick={() => setOpen(true)} className="rounded-xl shadow-md">
-            <Plus className="w-4 h-4 mr-2" /> Create First Brand
+            <Plus className="w-4 h-4 me-2" /> {t.brands.createFirstBrand}
           </Button>
         </div>
       ) : (
@@ -233,7 +238,6 @@ export default function Brands() {
               data-testid={`card-brand-${brand.id}`}
             >
               <Card className="hover-lift glass-card overflow-hidden h-full flex flex-col group">
-                {/* Color Banner */}
                 <div className="h-2 w-full" style={{ background: `linear-gradient(to right, ${brand.primaryColor}, ${brand.secondaryColor})` }} />
 
                 <CardContent className="p-6 flex-1 flex flex-col">
@@ -272,8 +276,8 @@ export default function Brands() {
                     <div className="flex items-center gap-2 text-sm">
                       <PaintBucket className="w-3.5 h-3.5 text-muted-foreground" />
                       <div className="flex gap-2 items-center">
-                        <div className="w-5 h-5 rounded-full border-2 border-background shadow" style={{ backgroundColor: brand.primaryColor }} title={`Primary: ${brand.primaryColor}`} />
-                        <div className="w-5 h-5 rounded-full border-2 border-background shadow" style={{ backgroundColor: brand.secondaryColor }} title={`Secondary: ${brand.secondaryColor}`} />
+                        <div className="w-5 h-5 rounded-full border-2 border-background shadow" style={{ backgroundColor: brand.primaryColor }} />
+                        <div className="w-5 h-5 rounded-full border-2 border-background shadow" style={{ backgroundColor: brand.secondaryColor }} />
                         <span className="text-xs text-muted-foreground">{brand.primaryColor} · {brand.secondaryColor}</span>
                       </div>
                     </div>
@@ -293,7 +297,7 @@ export default function Brands() {
 
                   <Link href={`/studio?brandId=${brand.id}`}>
                     <Button variant="outline" size="sm" className="w-full mt-4 rounded-lg border-border/50 hover:border-primary/50 hover:bg-primary/5 hover:text-primary">
-                      <Wand2 className="w-3.5 h-3.5 mr-2" /> Generate Creative
+                      <Wand2 className="w-3.5 h-3.5 me-2" /> {t.brands.generateCreative}
                     </Button>
                   </Link>
                 </CardContent>
@@ -316,8 +320,8 @@ export default function Brands() {
                 <Plus className="w-6 h-6" />
               </div>
               <div className="text-center">
-                <p className="font-semibold">Add New Brand</p>
-                <p className="text-xs text-muted-foreground mt-1">Set up brand colors, fonts & more</p>
+                <p className="font-semibold">{t.brands.addNewBrand}</p>
+                <p className="text-xs text-muted-foreground mt-1">{t.brands.addNewBrandDesc}</p>
               </div>
             </button>
           </motion.div>

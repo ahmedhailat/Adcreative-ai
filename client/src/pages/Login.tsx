@@ -9,7 +9,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { Wand2, Sparkles, Zap, TrendingUp, Eye, EyeOff, Loader2 } from "lucide-react";
+import { useLang } from "@/contexts/LangContext";
+import { Wand2, Sparkles, Zap, TrendingUp, Eye, EyeOff, Loader2, Languages, Check } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import type { Lang } from "@/contexts/LangContext";
 
 const loginSchema = z.object({
   email: z.string().email("Please enter a valid email"),
@@ -27,13 +35,8 @@ const registerSchema = loginSchema.extend({
 type LoginForm = z.infer<typeof loginSchema>;
 type RegisterForm = z.infer<typeof registerSchema>;
 
-const features = [
-  { icon: Sparkles, title: "AI-Powered Creatives", desc: "Generate stunning ads in seconds with Gemini AI" },
-  { icon: Zap, title: "Multi-Platform Ready", desc: "Facebook, Instagram, Google, TikTok & more" },
-  { icon: TrendingUp, title: "Performance Scores", desc: "Know which creatives will convert before you launch" },
-];
-
 export default function Login() {
+  const { t, lang, setLang } = useLang();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
@@ -58,7 +61,7 @@ export default function Login() {
       setLocation("/");
     },
     onError: (err: any) => {
-      toast({ title: "Login failed", description: err.message || "Invalid email or password", variant: "destructive" });
+      toast({ title: t.login.loginFailed, description: err.message || t.login.invalidCredentials, variant: "destructive" });
     },
   });
 
@@ -69,15 +72,25 @@ export default function Login() {
       setLocation("/");
     },
     onError: (err: any) => {
-      toast({ title: "Registration failed", description: err.message || "Could not create account", variant: "destructive" });
+      toast({ title: t.login.registerFailed, description: err.message || t.login.couldNotCreate, variant: "destructive" });
     },
   });
+
+  const features = [
+    { icon: Sparkles, title: t.login.aiPowered, desc: t.login.aiPoweredDesc },
+    { icon: Zap, title: t.login.multiPlatform, desc: t.login.multiPlatformDesc },
+    { icon: TrendingUp, title: t.login.performance, desc: t.login.performanceDesc },
+  ];
+
+  const langOptions: { value: Lang; label: string }[] = [
+    { value: "en", label: "English" },
+    { value: "ar", label: "العربية" },
+  ];
 
   return (
     <div className="min-h-screen flex">
       {/* Left panel – branding */}
       <div className="hidden lg:flex lg:w-1/2 flex-col justify-between p-12 bg-gradient-to-br from-[hsl(262,83%,20%)] via-[hsl(262,83%,30%)] to-[hsl(280,80%,40%)] relative overflow-hidden">
-        {/* Decorative blobs */}
         <div className="absolute top-0 left-0 w-96 h-96 bg-white/5 rounded-full -translate-x-1/2 -translate-y-1/2 blur-3xl" />
         <div className="absolute bottom-0 right-0 w-80 h-80 bg-white/5 rounded-full translate-x-1/2 translate-y-1/2 blur-3xl" />
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-primary/20 rounded-full blur-3xl" />
@@ -94,11 +107,11 @@ export default function Login() {
         <div className="relative z-10 space-y-8">
           <div>
             <h1 className="text-4xl font-extrabold text-white leading-tight mb-4">
-              Create Ad Creatives<br />
-              <span className="text-white/70">That Actually Convert</span>
+              {t.login.createsActuallyConvert}<br />
+              <span className="text-white/70">{t.login.thatConvert}</span>
             </h1>
             <p className="text-white/60 text-lg leading-relaxed">
-              AI-powered advertising platform trusted by thousands of marketers worldwide.
+              {t.login.aiTrusted}
             </p>
           </div>
 
@@ -127,8 +140,8 @@ export default function Login() {
               ))}
             </div>
             <div>
-              <p className="text-white text-sm font-semibold">Join 10,000+ marketers</p>
-              <p className="text-white/55 text-xs">generating ads every day</p>
+              <p className="text-white text-sm font-semibold">{t.login.joinMarketers}</p>
+              <p className="text-white/55 text-xs">{t.login.generatingEveryday}</p>
             </div>
           </div>
         </div>
@@ -137,22 +150,46 @@ export default function Login() {
       {/* Right panel – form */}
       <div className="flex-1 flex items-center justify-center p-6 bg-background">
         <div className="w-full max-w-md space-y-8">
-          {/* Mobile logo */}
-          <div className="flex lg:hidden items-center gap-2 mb-2">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-              <Wand2 className="w-4 h-4 text-primary-foreground" />
+          {/* Mobile logo + lang toggle row */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
+                <Wand2 className="w-4 h-4 text-primary-foreground" />
+              </div>
+              <span className="font-bold text-lg">AdCreative AI</span>
             </div>
-            <span className="font-bold text-lg">AdCreative AI</span>
+            {/* Language toggle visible on all screen sizes on login */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  data-testid="button-lang-toggle-login"
+                  className="flex items-center gap-1.5 h-9 px-3 rounded-lg border border-border/60 bg-background/50 hover:bg-accent text-sm font-semibold transition-colors"
+                >
+                  <Languages className="w-4 h-4 text-muted-foreground" />
+                  <span>{lang === "ar" ? "ع" : "EN"}</span>
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                {langOptions.map((opt) => (
+                  <DropdownMenuItem
+                    key={opt.value}
+                    onClick={() => setLang(opt.value)}
+                    className="flex items-center justify-between cursor-pointer"
+                  >
+                    <span>{opt.label}</span>
+                    {lang === opt.value && <Check className="w-4 h-4 text-primary" />}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
 
           <div>
             <h2 className="text-3xl font-extrabold text-foreground">
-              {mode === "login" ? "Welcome back" : "Get started free"}
+              {mode === "login" ? t.login.welcomeBack : t.login.getStarted}
             </h2>
             <p className="text-muted-foreground mt-2">
-              {mode === "login"
-                ? "Sign in to your account to continue."
-                : "Create your account and start generating ads."}
+              {mode === "login" ? t.login.signInDesc : t.login.createAccountDesc}
             </p>
           </div>
 
@@ -163,21 +200,21 @@ export default function Login() {
               data-testid="tab-login"
               className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${mode === "login" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}
             >
-              Sign In
+              {t.login.signIn}
             </button>
             <button
               onClick={() => setMode("register")}
               data-testid="tab-register"
               className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${mode === "register" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}
             >
-              Create Account
+              {t.login.createAccount}
             </button>
           </div>
 
           {mode === "login" ? (
             <form onSubmit={loginForm.handleSubmit((d) => loginMutation.mutate(d))} className="space-y-5">
               <div className="space-y-2">
-                <Label htmlFor="login-email">Email</Label>
+                <Label htmlFor="login-email">{t.login.email}</Label>
                 <Input
                   id="login-email"
                   type="email"
@@ -192,20 +229,20 @@ export default function Login() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="login-password">Password</Label>
+                <Label htmlFor="login-password">{t.login.password}</Label>
                 <div className="relative">
                   <Input
                     id="login-password"
                     type={showPassword ? "text" : "password"}
                     placeholder="••••••••"
                     data-testid="input-password"
-                    className="h-11 pr-10"
+                    className="h-11 pe-10"
                     {...loginForm.register("password")}
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                    className="absolute end-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
@@ -221,24 +258,24 @@ export default function Login() {
                 disabled={loginMutation.isPending}
                 data-testid="button-login"
               >
-                {loginMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-                Sign In
+                {loginMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin me-2" /> : null}
+                {t.login.signInBtn}
               </Button>
 
               <p className="text-center text-sm text-muted-foreground">
-                Don't have an account?{" "}
+                {t.login.noAccount}{" "}
                 <button type="button" onClick={() => setMode("register")} className="text-primary font-semibold hover:underline">
-                  Create one free
+                  {t.login.createOne}
                 </button>
               </p>
             </form>
           ) : (
             <form onSubmit={registerForm.handleSubmit((d) => registerMutation.mutate(d))} className="space-y-5">
               <div className="space-y-2">
-                <Label htmlFor="reg-name">Full Name</Label>
+                <Label htmlFor="reg-name">{t.login.name}</Label>
                 <Input
                   id="reg-name"
-                  placeholder="John Smith"
+                  placeholder={t.login.namePlaceholder}
                   data-testid="input-name"
                   className="h-11"
                   {...registerForm.register("name")}
@@ -249,7 +286,7 @@ export default function Login() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="reg-email">Email</Label>
+                <Label htmlFor="reg-email">{t.login.email}</Label>
                 <Input
                   id="reg-email"
                   type="email"
@@ -264,20 +301,20 @@ export default function Login() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="reg-password">Password</Label>
+                <Label htmlFor="reg-password">{t.login.password}</Label>
                 <div className="relative">
                   <Input
                     id="reg-password"
                     type={showPassword ? "text" : "password"}
-                    placeholder="Min. 6 characters"
+                    placeholder={t.login.minPassword}
                     data-testid="input-register-password"
-                    className="h-11 pr-10"
+                    className="h-11 pe-10"
                     {...registerForm.register("password")}
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    className="absolute end-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
@@ -288,20 +325,20 @@ export default function Login() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="reg-confirm">Confirm Password</Label>
+                <Label htmlFor="reg-confirm">{t.login.confirmPassword}</Label>
                 <div className="relative">
                   <Input
                     id="reg-confirm"
                     type={showConfirm ? "text" : "password"}
-                    placeholder="Repeat password"
+                    placeholder={t.login.repeatPassword}
                     data-testid="input-confirm-password"
-                    className="h-11 pr-10"
+                    className="h-11 pe-10"
                     {...registerForm.register("confirmPassword")}
                   />
                   <button
                     type="button"
                     onClick={() => setShowConfirm(!showConfirm)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    className="absolute end-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                   >
                     {showConfirm ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
@@ -317,14 +354,14 @@ export default function Login() {
                 disabled={registerMutation.isPending}
                 data-testid="button-register"
               >
-                {registerMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-                Create Free Account
+                {registerMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin me-2" /> : null}
+                {t.login.createFreeAccount}
               </Button>
 
               <p className="text-center text-sm text-muted-foreground">
-                Already have an account?{" "}
+                {t.login.alreadyHave}{" "}
                 <button type="button" onClick={() => setMode("login")} className="text-primary font-semibold hover:underline">
-                  Sign in
+                  {t.login.signInLink}
                 </button>
               </p>
             </form>

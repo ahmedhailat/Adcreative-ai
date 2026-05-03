@@ -4,6 +4,15 @@
 
 AI-powered advertising creative generation platform. Users manage brands, generate professional ad creatives using Gemini AI, browse a creative library, and download ads in various platform formats.
 
+## Internationalization (i18n)
+
+- **Languages**: English + Arabic (العربية)
+- **Context**: `client/src/contexts/LangContext.tsx` — `LangProvider` wraps the entire app; exposes `useLang()` hook returning `{ lang, setLang, t, isRTL }`
+- **Translations**: Full typed translation object (`t`) covering all pages (nav, dashboard, brands, studio, library, login, common)
+- **RTL**: `document.documentElement.dir` is set to `"rtl"` automatically when Arabic is active; `"ltr"` for English
+- **Persistence**: Language stored in `localStorage` key `adcreative-lang`
+- **Toggle UI**: Language button (Languages icon + "EN"/"ع") in every header — dashboard top-right and login page top-right
+
 ## Stack
 
 - **Frontend**: React + Vite + TypeScript + TailwindCSS + shadcn/ui
