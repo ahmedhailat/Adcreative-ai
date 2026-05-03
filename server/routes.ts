@@ -508,8 +508,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       } else {
         // Fallback: create price on-the-fly if lookup key not found
         const unitAmount = plan === "pro"
-          ? (interval === "yearly" ? 27600 : 2900)
-          : (interval === "yearly" ? 75600 : 7900);
+          ? (interval === "yearly" ? 5000 : 100)
+          : (interval === "yearly" ? 5000 : 100);
         const productName = plan === "pro" ? "AdCreative Pro" : "AdCreative Business";
 
         const product = await stripe.products.create({ name: productName });
