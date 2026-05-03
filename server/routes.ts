@@ -5,12 +5,19 @@ import bcrypt from "bcryptjs";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import os from "os";
+import { exec } from "child_process";
+import { promisify } from "util";
 import { storage } from "./storage";
 import { stripe } from "./stripeClient";
 import { handleStripeWebhook } from "./webhookHandlers";
 import { api } from "@shared/routes";
 import { AD_FORMATS } from "@shared/schema";
 import { z } from "zod";
+
+const execAsync = promisify(exec);
+const FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
+const FONT_REG  = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
 
 // Multer setup — store video uploads in /tmp/uploads
 const uploadDir = "/tmp/uploads";
@@ -126,6 +133,63 @@ Create a visually stunning, professional advertisement image with:
 
   const mimeType = imagePart.inlineData.mimeType || "image/png";
   return `data:${mimeType};base64,${imagePart.inlineData.data}`;
+}
+
+function escapeFFmpegText(text: string): string {
+  return text
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "\\'")
+    .replace(/:/g, "\\:")
+    .replace(/\[/g, "\\[")
+    .replace(/\]/g, "\\]")
+    .slice(0, 60);
+}
+
+async function generateAdVideo(params: {
+  imageData: string;
+  headline: string;
+  cta: string;
+  primaryColor: string;
+}): Promise<string> {
+  const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const tmpDir = os.tmpdir();
+  const inputPath  = path.join(tmpDir, `ad_img_${id}.png`);
+  const outputPath = path.join(tmpDir, `ad_vid_${id}.mp4`);
+
+  const base64Raw = params.imageData.replace(/^data:image\/\w+;base64,/, "");
+  fs.writeFileSync(inputPath, Buffer.from(base64Raw, "base64"));
+
+  const hex = params.primaryColor.replace("#", "").padEnd(6, "0").slice(0, 6);
+  const overlayColor = `0x${hex}DD`;
+
+  const headline = escapeFFmpegText(params.headline);
+  const cta      = escapeFFmpegText(params.cta);
+
+  const vf = [
+    // 1. Fit + pad image to 1080x1080
+    "scale=1080:1080:force_original_aspect_ratio=decrease",
+    "pad=1080:1080:(ow-iw)/2:(oh-ih)/2:color=black",
+    // 2. Ken Burns slow zoom
+    "zoompan=z='min(zoom+0.0008,1.25)':d=225:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1080:fps=25",
+    // 3. Headline text — fades in at t=0.8s
+    `drawtext=fontfile=${FONT_BOLD}:text='${headline}':x=(w-tw)/2:y=h*0.72:fontsize=46:fontcolor=white:shadowcolor=black@0.7:shadowx=2:shadowy=2:alpha='if(lt(t\\,0.8)\\,0\\,if(lt(t\\,1.8)\\,(t-0.8)/1.0\\,1))'`,
+    // 4. CTA pill — fades in at t=1.8s
+    `drawtext=fontfile=${FONT_BOLD}:text='  ${cta}  ':x=(w-tw)/2:y=h*0.84:fontsize=34:fontcolor=white:box=1:boxcolor=${overlayColor}:boxborderw=18:alpha='if(lt(t\\,1.8)\\,0\\,if(lt(t\\,2.8)\\,(t-1.8)/1.0\\,1))'`,
+    // 5. Fade in + fade out
+    "fade=t=in:st=0:d=0.8",
+    "fade=t=out:st=8.2:d=0.8",
+  ].join(",");
+
+  const cmd = `ffmpeg -y -loop 1 -i "${inputPath}" -vf "${vf}" -t 9 -r 25 -c:v libx264 -pix_fmt yuv420p -preset fast -crf 22 -movflags +faststart "${outputPath}"`;
+
+  try {
+    await execAsync(cmd, { timeout: 120_000 });
+    const buf = fs.readFileSync(outputPath);
+    return `data:video/mp4;base64,${buf.toString("base64")}`;
+  } finally {
+    try { fs.unlinkSync(inputPath); } catch {}
+    try { fs.unlinkSync(outputPath); } catch {}
+  }
 }
 
 function calculatePerformanceScore(params: {
@@ -340,8 +404,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           });
 
           if (isVideoAI) {
-            // AI video: generate a thumbnail image and store it as imageData
-            // (true video generation would require a dedicated video model)
+            // Step 1: Generate AI ad image
             const imageData = await generateAdImage({
               brandName: brand.name,
               brandIndustry: brand.industry,
@@ -357,6 +420,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
               formatName: input.formatName,
               goal: input.goal,
             });
+            // Step 2: Encode the image into a real MP4 video with FFmpeg
+            const videoUrl = await generateAdVideo({
+              imageData,
+              headline: adCopy.headline,
+              cta: adCopy.cta,
+              primaryColor: brand.primaryColor,
+            });
             const score = calculatePerformanceScore({
               headline: adCopy.headline,
               description: adCopy.description,
@@ -367,6 +437,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             await storage.updateCreative(creative.id, {
               adCopy: adCopy as any,
               imageData,
+              videoUrl,
               status: "ready",
               performanceScore: score,
             });

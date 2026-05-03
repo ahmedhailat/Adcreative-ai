@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useLocation, Link } from "wouter";
 import { AD_FORMATS, type GenerateCreativeInput } from "@shared/schema";
 import { useBrands } from "@/hooks/use-brands";
@@ -15,7 +15,8 @@ import { Linkedin as SiLinkedin } from "lucide-react";
 import {
   ArrowRight, ArrowLeft, Loader2, CheckCircle2, AlertCircle, Wand2,
   Download, Sparkles, Library, Image as ImageIcon, Video, Upload,
-  Crown, Zap, Film, Lock,
+  Crown, Zap, Film, Lock, Play, RefreshCw, Star, TrendingUp,
+  Layers, Target, Eye,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useToast } from "@/hooks/use-toast";
@@ -33,31 +34,62 @@ const PLATFORM_COLORS: Record<string, string> = {
   facebook: "#1877f2",
   instagram: "#e1306c",
   google: "#4285f4",
-  tiktok: "#010101",
+  tiktok: "#ff0050",
   linkedin: "#0077b5",
   twitter: "#1da1f2",
 };
 
 type MediaMode = "image" | "video-upload" | "video-ai";
 
-function UpgradeProBanner({ message, ctaLabel }: { message: string; ctaLabel: string }) {
+const VIDEO_STEPS = [
+  { icon: Wand2,   label: "Writing ad copy", labelAr: "كتابة النص الإعلاني" },
+  { icon: ImageIcon, label: "Generating image", labelAr: "توليد الصورة" },
+  { icon: Film,    label: "Rendering video", labelAr: "تصيير الفيديو" },
+  { icon: Sparkles, label: "Finalizing", labelAr: "الإنهاء" },
+];
+const IMAGE_STEPS = [
+  { icon: Wand2,    label: "Writing ad copy", labelAr: "كتابة النص الإعلاني" },
+  { icon: ImageIcon, label: "Generating image", labelAr: "توليد الصورة" },
+  { icon: Star,     label: "Scoring performance", labelAr: "تقييم الأداء" },
+  { icon: Sparkles, label: "Finalizing", labelAr: "الإنهاء" },
+];
+
+function ProBadge() {
   return (
-    <div className="rounded-xl border border-purple-500/30 bg-gradient-to-br from-purple-500/10 to-indigo-500/10 p-5 flex items-start gap-4">
-      <div className="w-10 h-10 rounded-xl bg-purple-500/20 flex items-center justify-center shrink-0">
-        <Lock className="w-5 h-5 text-purple-500" />
+    <span className="absolute top-2.5 end-2.5 bg-gradient-to-r from-purple-500 to-indigo-500 text-white text-[9px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wide shadow">
+      PRO
+    </span>
+  );
+}
+
+function UpgradeBanner({ message, ctaLabel }: { message: string; ctaLabel: string }) {
+  return (
+    <div className="rounded-xl border border-purple-500/30 bg-gradient-to-r from-purple-500/10 to-indigo-500/10 p-4 flex items-center gap-4">
+      <div className="w-9 h-9 rounded-lg bg-purple-500/20 flex items-center justify-center shrink-0">
+        <Lock className="w-4 h-4 text-purple-400" />
       </div>
       <div className="flex-1 min-w-0">
-        <p className="font-semibold text-foreground text-sm mb-1 flex items-center gap-2">
-          <Crown className="w-4 h-4 text-yellow-500" /> Pro Feature
+        <p className="font-semibold text-sm flex items-center gap-1.5">
+          <Crown className="w-3.5 h-3.5 text-yellow-500" /> Pro Feature
         </p>
-        <p className="text-sm text-muted-foreground">{message}</p>
+        <p className="text-xs text-muted-foreground mt-0.5">{message}</p>
       </div>
-      <Button size="sm" className="shrink-0 bg-gradient-to-r from-purple-500 to-indigo-500 hover:opacity-90 text-white" asChild>
+      <Button size="sm" className="shrink-0 bg-gradient-to-r from-purple-500 to-indigo-500 hover:opacity-90 border-0" asChild>
         <Link href="/pricing">
-          <Zap className="w-3.5 h-3.5 me-1.5" />
-          {ctaLabel}
+          <Zap className="w-3 h-3 me-1" /> {ctaLabel}
         </Link>
       </Button>
+    </div>
+  );
+}
+
+function StepDot({ n, active, done }: { n: number; active: boolean; done: boolean }) {
+  return (
+    <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm border-2 transition-all duration-300 ${
+      done   ? "bg-emerald-500 border-emerald-500 text-white shadow-lg shadow-emerald-500/30"
+             : active ? "bg-primary border-primary text-primary-foreground shadow-lg shadow-primary/30"
+             : "bg-card border-border text-muted-foreground"}`}>
+      {done ? <CheckCircle2 className="w-4 h-4" /> : n}
     </div>
   );
 }
@@ -65,7 +97,7 @@ function UpgradeProBanner({ message, ctaLabel }: { message: string; ctaLabel: st
 export default function Studio() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
-  const { t } = useLang();
+  const { t, lang } = useLang();
   const { user } = useAuth();
   const { data: brands, isLoading: brandsLoading } = useBrands();
   const generateCreative = useGenerateCreative();
@@ -79,16 +111,28 @@ export default function Studio() {
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [progressStep, setProgressStep] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [formData, setFormData] = useState<Partial<GenerateCreativeInput>>({
-    goal: "awareness"
-  });
+  const [formData, setFormData] = useState<Partial<GenerateCreativeInput>>({ goal: "awareness" });
 
   const userPlan = (user as any)?.plan ?? "free";
   const isPro = userPlan === "pro" || userPlan === "business";
 
   const STEP_LABELS = [t.studio.step1, t.studio.step2, t.studio.step3];
+
+  // Animate progress steps during generation
+  useEffect(() => {
+    if (step !== 3 || !generatingId) return;
+    if (resultCreative?.status === "ready" || resultCreative?.status === "failed") return;
+
+    const steps = mediaMode === "video-ai" ? VIDEO_STEPS.length : IMAGE_STEPS.length;
+    const interval = mediaMode === "video-ai" ? 6000 : 3500;
+    const timer = setInterval(() => {
+      setProgressStep(p => Math.min(p + 1, steps - 1));
+    }, interval);
+    return () => clearInterval(timer);
+  }, [step, generatingId, resultCreative?.status, mediaMode]);
 
   const handleVideoFileSelect = useCallback((file: File) => {
     if (!file.type.startsWith("video/")) {
@@ -100,8 +144,7 @@ export default function Studio() {
       return;
     }
     setVideoFile(file);
-    const url = URL.createObjectURL(file);
-    setVideoPreviewUrl(url);
+    setVideoPreviewUrl(URL.createObjectURL(file));
   }, [toast]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -113,10 +156,6 @@ export default function Studio() {
 
   const handleNext = () => {
     if (step === 1) {
-      if (!formData.brandId && !formData.formatSize) {
-        toast({ title: t.studio.selectBrandAndFormat, description: t.studio.selectBrandAndFormatDesc, variant: "destructive" });
-        return;
-      }
       if (!formData.brandId) {
         toast({ title: t.studio.selectBrandFirst, description: t.studio.selectBrandFirstDesc, variant: "destructive" });
         return;
@@ -127,12 +166,12 @@ export default function Studio() {
       }
     }
     if (step === 2) {
-      if (!formData.productName || !formData.productDescription) {
-        if (!formData.productName) {
-          toast({ title: t.studio.productNameRequired, description: t.studio.productNameRequiredDesc, variant: "destructive" });
-        } else {
-          toast({ title: t.studio.productDescRequired, description: t.studio.productDescRequiredDesc, variant: "destructive" });
-        }
+      if (!formData.productName) {
+        toast({ title: t.studio.productNameRequired, description: t.studio.productNameRequiredDesc, variant: "destructive" });
+        return;
+      }
+      if (!formData.productDescription) {
+        toast({ title: t.studio.productDescRequired, description: t.studio.productDescRequiredDesc, variant: "destructive" });
         return;
       }
       if (mediaMode === "video-upload" && !videoFile) {
@@ -147,46 +186,30 @@ export default function Studio() {
 
   const handleGenerate = async () => {
     try {
-      const autoTitle = formData.title?.trim()
-        || `${formData.productName ?? ""} – ${formData.formatName ?? ""}`;
-
-      const brandId = formData.brandId!;
-      const platform = formData.platform!;
-      const formatSize = formData.formatSize!;
-      const formatName = formData.formatName!;
-      const productName = formData.productName!;
-      const productDescription = formData.productDescription!;
-      const goal = formData.goal!;
-      const targetAudience = formData.targetAudience;
+      setProgressStep(0);
+      const autoTitle = formData.title?.trim() || `${formData.productName ?? ""} – ${formData.formatName ?? ""}`;
+      const base = {
+        brandId: formData.brandId!,
+        platform: formData.platform!,
+        formatSize: formData.formatSize!,
+        formatName: formData.formatName!,
+        productName: formData.productName!,
+        productDescription: formData.productDescription!,
+        goal: formData.goal!,
+        targetAudience: formData.targetAudience,
+        title: autoTitle,
+      };
 
       if (mediaMode === "video-upload" && videoFile) {
-        const result = await uploadVideo.mutateAsync({
-          file: videoFile,
-          brandId,
-          title: autoTitle,
-          platform,
-          formatSize,
-          formatName,
-          productName,
-          productDescription,
-          goal,
-          targetAudience,
-        });
+        const result = await uploadVideo.mutateAsync({ file: videoFile, ...base });
         setGeneratingId(result.id);
         setStep(3);
       } else if (mediaMode === "video-ai") {
-        const created = await generateCreative.mutateAsync({
-          brandId, platform, formatSize, formatName, productName,
-          productDescription, goal, targetAudience, title: autoTitle,
-          mediaType: "video",
-        } as any);
+        const created = await generateCreative.mutateAsync({ ...base, mediaType: "video" } as any);
         setGeneratingId(created.id);
         setStep(3);
       } else {
-        const created = await generateCreative.mutateAsync({
-          brandId, platform, formatSize, formatName, productName,
-          productDescription, goal, targetAudience, title: autoTitle,
-        });
+        const created = await generateCreative.mutateAsync(base);
         setGeneratingId(created.id);
         setStep(3);
       }
@@ -200,9 +223,9 @@ export default function Studio() {
     const isVideo = resultCreative.mediaType === "video";
     const src = isVideo ? resultCreative.videoUrl : resultCreative.imageData;
     if (!src) return;
-    const a = document.createElement('a');
+    const a = document.createElement("a");
     a.href = src;
-    a.download = `${resultCreative.title.replace(/\s+/g, '-').toLowerCase()}-ad.${isVideo ? "mp4" : "png"}`;
+    a.download = `${resultCreative.title.replace(/\s+/g, "-").toLowerCase()}.${isVideo ? "mp4" : "png"}`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -216,47 +239,39 @@ export default function Studio() {
     setVideoFile(null);
     if (videoPreviewUrl) URL.revokeObjectURL(videoPreviewUrl);
     setVideoPreviewUrl(null);
+    setProgressStep(0);
   };
 
   const isPending = generateCreative.isPending || uploadVideo.isPending;
   const resultIsVideo = resultCreative?.mediaType === "video";
+  const progressSteps = mediaMode === "video-ai" ? VIDEO_STEPS : IMAGE_STEPS;
 
   return (
-    <div className="max-w-5xl mx-auto space-y-8 pb-12">
-      {/* Header */}
-      <div className="text-center space-y-2">
-        <div className="inline-flex items-center gap-2 px-4 py-2 bg-primary/10 text-primary rounded-full text-sm font-semibold mb-2">
-          <Sparkles className="w-4 h-4" />
-          AI Creative Studio
+    <div className="max-w-5xl mx-auto space-y-7 pb-16">
+
+      {/* ── Header ── */}
+      <div className="text-center space-y-2 pt-2">
+        <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-primary/10 text-primary rounded-full text-xs font-bold uppercase tracking-wider mb-1 border border-primary/20">
+          <Sparkles className="w-3.5 h-3.5" /> AI Creative Studio
         </div>
-        <h1 className="text-4xl font-extrabold text-foreground">{t.studio.title}</h1>
-        <p className="text-muted-foreground text-lg max-w-2xl mx-auto">
-          {t.studio.subtitle}
-        </p>
+        <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight">{t.studio.title}</h1>
+        <p className="text-muted-foreground max-w-xl mx-auto">{t.studio.subtitle}</p>
       </div>
 
-      {/* Step Indicator */}
-      <div className="flex items-center justify-center gap-0 max-w-lg mx-auto">
+      {/* ── Step Indicator ── */}
+      <div className="flex items-center justify-center gap-0 max-w-sm mx-auto">
         {STEP_LABELS.map((label, i) => {
           const s = i + 1;
-          const isActive = step === s;
-          const isDone = step > s;
           return (
             <div key={s} className="flex items-center flex-1 last:flex-none">
-              <div className="flex flex-col items-center gap-2 flex-shrink-0">
-                <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm border-2 transition-all duration-300 ${
-                  isDone ? "bg-green-500 border-green-500 text-white shadow-lg shadow-green-500/30"
-                    : isActive ? "bg-primary border-primary text-primary-foreground shadow-lg shadow-primary/30"
-                    : "bg-card border-border text-muted-foreground"
-                }`}>
-                  {isDone ? <CheckCircle2 className="w-5 h-5" /> : s}
-                </div>
-                <span className={`text-xs font-medium whitespace-nowrap ${isActive ? "text-foreground" : "text-muted-foreground"}`}>
+              <div className="flex flex-col items-center gap-1.5 shrink-0">
+                <StepDot n={s} active={step === s} done={step > s} />
+                <span className={`text-[11px] font-semibold whitespace-nowrap ${step === s ? "text-foreground" : "text-muted-foreground"}`}>
                   {label}
                 </span>
               </div>
               {s < 3 && (
-                <div className={`flex-1 h-0.5 mx-3 mb-5 rounded-full transition-all duration-500 ${step > s ? "bg-green-500" : "bg-border"}`} />
+                <div className={`flex-1 h-0.5 mx-2 mb-4 rounded-full transition-all duration-500 ${step > s ? "bg-emerald-500" : "bg-border"}`} />
               )}
             </div>
           );
@@ -264,34 +279,36 @@ export default function Studio() {
       </div>
 
       <AnimatePresence mode="wait">
-        {/* STEP 1 - Brand & Format */}
+
+        {/* ════════════════ STEP 1 ════════════════ */}
         {step === 1 && (
-          <motion.div key="step1" initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }} className="space-y-6">
-            <div className="glass-card rounded-2xl p-6 space-y-5">
-              <div className="flex items-center gap-3 pb-2 border-b border-border/50">
-                <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                  <span className="text-primary font-bold text-sm">1</span>
+          <motion.div key="step1" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }} className="space-y-5">
+
+            {/* Brand Selection */}
+            <div className="rounded-2xl border border-border/60 bg-card p-6 space-y-5">
+              <div className="flex items-center gap-3">
+                <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center">
+                  <span className="text-primary font-bold text-xs">1</span>
                 </div>
-                <h2 className="text-xl font-bold">{t.studio.selectBrand}</h2>
-                {!formData.brandId ? (
-                  <span className="ms-auto text-xs font-semibold text-muted-foreground bg-muted px-2.5 py-1 rounded-full">{t.studio.pickOne}</span>
-                ) : (
-                  <CheckCircle2 className="ms-auto w-5 h-5 text-green-500" />
-                )}
+                <h2 className="font-bold text-lg">{t.studio.selectBrand}</h2>
+                {formData.brandId
+                  ? <CheckCircle2 className="ms-auto w-5 h-5 text-emerald-500" />
+                  : <span className="ms-auto text-xs text-muted-foreground bg-muted px-2.5 py-1 rounded-full font-medium">{t.studio.pickOne}</span>
+                }
               </div>
 
               {brandsLoading ? (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {[1,2,3].map(i => <div key={i} className="h-16 bg-muted animate-pulse rounded-xl" />)}
+                  {[1,2,3].map(i => <div key={i} className="h-16 bg-muted/60 animate-pulse rounded-xl" />)}
                 </div>
               ) : !brands?.length ? (
-                <div className="flex items-center gap-4 p-4 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-xl border border-amber-500/20">
+                <div className="flex items-center gap-4 p-4 bg-amber-500/10 text-amber-500 rounded-xl border border-amber-500/20">
                   <AlertCircle className="w-5 h-5 shrink-0" />
                   <div className="flex-1">
-                    <p className="font-medium">{t.studio.noBrandsYet}</p>
-                    <p className="text-sm opacity-80">{t.studio.noBrandsDesc}</p>
+                    <p className="font-semibold text-sm">{t.studio.noBrandsYet}</p>
+                    <p className="text-xs opacity-80">{t.studio.noBrandsDesc}</p>
                   </div>
-                  <Button size="sm" variant="outline" onClick={() => setLocation('/brands')} className="shrink-0 border-amber-500/30 text-amber-600 dark:text-amber-400">
+                  <Button size="sm" variant="outline" onClick={() => setLocation("/brands")} className="border-amber-500/30 text-amber-500 shrink-0">
                     {t.studio.addBrand}
                   </Button>
                 </div>
@@ -301,44 +318,43 @@ export default function Studio() {
                     <button
                       key={brand.id}
                       data-testid={`brand-select-${brand.id}`}
-                      onClick={() => setFormData({...formData, brandId: brand.id})}
-                      className={`flex items-center gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all text-left ${
+                      onClick={() => setFormData({ ...formData, brandId: brand.id })}
+                      className={`flex items-center gap-3 p-3.5 rounded-xl border-2 text-left transition-all ${
                         formData.brandId === brand.id
-                          ? 'border-primary bg-primary/5 shadow-md shadow-primary/10'
-                          : 'border-border/50 hover:border-primary/40 hover:bg-muted/50 bg-card'
+                          ? "border-primary bg-primary/5 shadow-md shadow-primary/10"
+                          : "border-border/50 hover:border-primary/40 hover:bg-muted/40 bg-background"
                       }`}
                     >
-                      <div className="w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold text-lg shrink-0"
-                           style={{ background: `linear-gradient(135deg, ${brand.primaryColor}, ${brand.secondaryColor})` }}>
+                      <div
+                        className="w-10 h-10 rounded-lg flex items-center justify-center text-white font-bold text-lg shrink-0"
+                        style={{ background: `linear-gradient(135deg, ${brand.primaryColor}, ${brand.secondaryColor})` }}
+                      >
                         {brand.name.charAt(0)}
                       </div>
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <p className="font-semibold text-sm truncate">{brand.name}</p>
                         <p className="text-xs text-muted-foreground truncate">{brand.industry}</p>
                       </div>
-                      {formData.brandId === brand.id && (
-                        <CheckCircle2 className="w-4 h-4 text-primary ms-auto shrink-0" />
-                      )}
+                      {formData.brandId === brand.id && <CheckCircle2 className="w-4 h-4 text-primary shrink-0" />}
                     </button>
                   ))}
                 </div>
               )}
             </div>
 
-            <div className="glass-card rounded-2xl p-6 space-y-5">
-              <div className="flex items-center gap-3 pb-2 border-b border-border/50">
-                <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                  <span className="text-primary font-bold text-sm">2</span>
+            {/* Ad Format */}
+            <div className="rounded-2xl border border-border/60 bg-card p-6 space-y-5">
+              <div className="flex items-center gap-3">
+                <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center">
+                  <span className="text-primary font-bold text-xs">2</span>
                 </div>
-                <h2 className="text-xl font-bold">{t.studio.selectFormat}</h2>
-                {!formData.formatSize ? (
-                  <span className="ms-auto text-xs font-semibold text-muted-foreground bg-muted px-2.5 py-1 rounded-full">{t.studio.pickOne}</span>
-                ) : (
-                  <CheckCircle2 className="ms-auto w-5 h-5 text-green-500" />
-                )}
+                <h2 className="font-bold text-lg">{t.studio.selectFormat}</h2>
+                {formData.formatSize
+                  ? <CheckCircle2 className="ms-auto w-5 h-5 text-emerald-500" />
+                  : <span className="ms-auto text-xs text-muted-foreground bg-muted px-2.5 py-1 rounded-full font-medium">{t.studio.pickOne}</span>
+                }
               </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 {AD_FORMATS.map((format) => {
                   const Icon = PLATFORM_ICONS[format.platform] || SiFacebook;
                   const color = PLATFORM_COLORS[format.platform] || "#6366f1";
@@ -347,22 +363,15 @@ export default function Studio() {
                     <button
                       key={format.id}
                       data-testid={`format-select-${format.id}`}
-                      onClick={() => setFormData({
-                        ...formData,
-                        platform: format.platform,
-                        formatSize: format.size,
-                        formatName: format.name
-                      })}
+                      onClick={() => setFormData({ ...formData, platform: format.platform, formatSize: format.size, formatName: format.name })}
                       className={`flex flex-col items-center gap-2.5 p-4 rounded-xl border-2 cursor-pointer transition-all ${
-                        isSelected
-                          ? 'border-primary bg-primary/5 shadow-md'
-                          : 'border-border/50 hover:border-primary/40 hover:bg-muted/50 bg-card'
+                        isSelected ? "border-primary bg-primary/5 shadow-md" : "border-border/50 hover:border-primary/40 hover:bg-muted/40 bg-background"
                       }`}
                     >
-                      <Icon className="w-7 h-7" style={{ color }} />
+                      <Icon className="w-6 h-6" style={{ color }} />
                       <div className="text-center">
                         <p className="font-semibold text-xs leading-tight">{format.name}</p>
-                        <p className="text-[10px] text-muted-foreground mt-1 font-mono">{format.size}</p>
+                        <p className="text-[10px] text-muted-foreground mt-0.5 font-mono">{format.size}</p>
                       </div>
                       {isSelected && <CheckCircle2 className="w-3.5 h-3.5 text-primary" />}
                     </button>
@@ -371,31 +380,29 @@ export default function Studio() {
               </div>
             </div>
 
-            {/* Media Type Selection */}
-            <div className="glass-card rounded-2xl p-6 space-y-5">
-              <div className="flex items-center gap-3 pb-2 border-b border-border/50">
-                <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-                  <span className="text-primary font-bold text-sm">3</span>
+            {/* Media Type */}
+            <div className="rounded-2xl border border-border/60 bg-card p-6 space-y-5">
+              <div className="flex items-center gap-3">
+                <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center">
+                  <span className="text-primary font-bold text-xs">3</span>
                 </div>
-                <h2 className="text-xl font-bold">{t.studio.mediaType}</h2>
+                <h2 className="font-bold text-lg">{t.studio.mediaType}</h2>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {/* Image */}
                 <button
                   onClick={() => setMediaMode("image")}
                   data-testid="media-type-image"
-                  className={`flex flex-col items-center gap-3 p-5 rounded-xl border-2 cursor-pointer transition-all ${
-                    mediaMode === "image"
-                      ? 'border-primary bg-primary/5 shadow-md shadow-primary/10'
-                      : 'border-border/50 hover:border-primary/40 hover:bg-muted/50 bg-card'
+                  className={`flex flex-col items-center gap-3 p-5 rounded-xl border-2 transition-all ${
+                    mediaMode === "image" ? "border-primary bg-primary/5 shadow-md" : "border-border/50 hover:border-primary/40 bg-background"
                   }`}
                 >
                   <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${mediaMode === "image" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
                     <ImageIcon className="w-6 h-6" />
                   </div>
                   <div className="text-center">
-                    <p className="font-semibold text-sm">{t.studio.image}</p>
-                    <p className="text-xs text-muted-foreground mt-1">{t.studio.generateAiVideoDesc.replace("video", "image")}</p>
+                    <p className="font-bold text-sm">{t.studio.image}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">AI-generated ad image</p>
                   </div>
                   {mediaMode === "image" && <CheckCircle2 className="w-4 h-4 text-primary" />}
                 </button>
@@ -404,25 +411,19 @@ export default function Studio() {
                 <button
                   onClick={() => isPro ? setMediaMode("video-upload") : null}
                   data-testid="media-type-video-upload"
-                  className={`flex flex-col items-center gap-3 p-5 rounded-xl border-2 cursor-pointer transition-all relative ${
-                    mediaMode === "video-upload"
-                      ? 'border-primary bg-primary/5 shadow-md shadow-primary/10'
-                      : isPro
-                        ? 'border-border/50 hover:border-primary/40 hover:bg-muted/50 bg-card'
-                        : 'border-border/40 bg-card/50 cursor-not-allowed opacity-70'
+                  className={`relative flex flex-col items-center gap-3 p-5 rounded-xl border-2 transition-all ${
+                    mediaMode === "video-upload" ? "border-primary bg-primary/5 shadow-md"
+                    : isPro ? "border-border/50 hover:border-primary/40 bg-background"
+                    : "border-border/40 bg-muted/20 cursor-not-allowed opacity-60"
                   }`}
                 >
-                  {!isPro && (
-                    <div className="absolute top-2 end-2">
-                      <span className="bg-purple-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-full uppercase">Pro</span>
-                    </div>
-                  )}
+                  {!isPro && <ProBadge />}
                   <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${mediaMode === "video-upload" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
                     <Upload className="w-6 h-6" />
                   </div>
                   <div className="text-center">
-                    <p className="font-semibold text-sm">{t.studio.uploadVideo}</p>
-                    <p className="text-xs text-muted-foreground mt-1">{t.studio.uploadVideoDesc}</p>
+                    <p className="font-bold text-sm">{t.studio.uploadVideo}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{t.studio.uploadVideoDesc}</p>
                   </div>
                   {mediaMode === "video-upload" && <CheckCircle2 className="w-4 h-4 text-primary" />}
                 </button>
@@ -431,32 +432,26 @@ export default function Studio() {
                 <button
                   onClick={() => isPro ? setMediaMode("video-ai") : null}
                   data-testid="media-type-video-ai"
-                  className={`flex flex-col items-center gap-3 p-5 rounded-xl border-2 cursor-pointer transition-all relative ${
-                    mediaMode === "video-ai"
-                      ? 'border-primary bg-primary/5 shadow-md shadow-primary/10'
-                      : isPro
-                        ? 'border-border/50 hover:border-primary/40 hover:bg-muted/50 bg-card'
-                        : 'border-border/40 bg-card/50 cursor-not-allowed opacity-70'
+                  className={`relative flex flex-col items-center gap-3 p-5 rounded-xl border-2 transition-all ${
+                    mediaMode === "video-ai" ? "border-primary bg-primary/5 shadow-md"
+                    : isPro ? "border-border/50 hover:border-primary/40 bg-background"
+                    : "border-border/40 bg-muted/20 cursor-not-allowed opacity-60"
                   }`}
                 >
-                  {!isPro && (
-                    <div className="absolute top-2 end-2">
-                      <span className="bg-purple-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-full uppercase">Pro</span>
-                    </div>
-                  )}
-                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${mediaMode === "video-ai" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
+                  {!isPro && <ProBadge />}
+                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${mediaMode === "video-ai" ? "bg-gradient-to-br from-purple-500 to-indigo-500 text-white" : "bg-muted text-muted-foreground"}`}>
                     <Film className="w-6 h-6" />
                   </div>
                   <div className="text-center">
-                    <p className="font-semibold text-sm">{t.studio.generateAiVideo}</p>
-                    <p className="text-xs text-muted-foreground mt-1">{t.studio.generateAiVideoDesc}</p>
+                    <p className="font-bold text-sm">{t.studio.generateAiVideo}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">MP4 with Ken Burns effect</p>
                   </div>
                   {mediaMode === "video-ai" && <CheckCircle2 className="w-4 h-4 text-primary" />}
                 </button>
               </div>
 
-              {!isPro && (mediaMode === "image") && (
-                <UpgradeProBanner message={t.studio.proFeatureDesc} ctaLabel={t.studio.upgradeToPro} />
+              {!isPro && (
+                <UpgradeBanner message={t.studio.proFeatureDesc} ctaLabel={t.studio.upgradeToPro} />
               )}
             </div>
 
@@ -465,44 +460,45 @@ export default function Studio() {
                 size="lg"
                 onClick={handleNext}
                 data-testid="button-next-step1"
-                className="h-12 px-8 rounded-xl shadow-lg shadow-primary/20"
+                className="h-12 px-8 rounded-xl shadow-lg shadow-primary/20 gap-2"
               >
-                {t.studio.continueBtn} <ArrowRight className="ms-2 w-4 h-4" />
+                {t.studio.continueBtn} <ArrowRight className="w-4 h-4" />
               </Button>
             </div>
           </motion.div>
         )}
 
-        {/* STEP 2 - Product Details */}
+        {/* ════════════════ STEP 2 ════════════════ */}
         {step === 2 && (
-          <motion.div key="step2" initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }}>
-            <div className="glass-card rounded-2xl p-6 space-y-6">
-              <div className="flex items-center gap-3 pb-2 border-b border-border/50">
+          <motion.div key="step2" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}>
+            <div className="rounded-2xl border border-border/60 bg-card p-6 space-y-6">
+              <div className="flex items-center gap-3 pb-1 border-b border-border/50">
                 <Button variant="ghost" size="icon" onClick={() => setStep(1)} className="rounded-lg h-8 w-8 -ms-1">
                   <ArrowLeft className="w-4 h-4" />
                 </Button>
-                <h2 className="text-xl font-bold">{t.studio.describeProduct}</h2>
-                {/* Badge for media type */}
-                <span className={`ms-auto text-xs font-bold px-2.5 py-1 rounded-full uppercase flex items-center gap-1.5 ${
-                  mediaMode === "image" ? "bg-blue-500/15 text-blue-500" :
-                  mediaMode === "video-upload" ? "bg-purple-500/15 text-purple-500" :
-                  "bg-indigo-500/15 text-indigo-500"
+                <h2 className="font-bold text-lg">{t.studio.describeProduct}</h2>
+                <span className={`ms-auto text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5 ${
+                  mediaMode === "image" ? "bg-blue-500/15 text-blue-400"
+                  : mediaMode === "video-upload" ? "bg-purple-500/15 text-purple-400"
+                  : "bg-indigo-500/15 text-indigo-400"
                 }`}>
-                  {mediaMode === "image" ? <><ImageIcon className="w-3 h-3" /> {t.studio.image}</> :
-                   mediaMode === "video-upload" ? <><Upload className="w-3 h-3" /> {t.studio.uploadVideo}</> :
-                   <><Film className="w-3 h-3" /> {t.studio.generateAiVideo}</>}
+                  {mediaMode === "image" ? <><ImageIcon className="w-3 h-3" /> Image</>
+                   : mediaMode === "video-upload" ? <><Upload className="w-3 h-3" /> Upload</>
+                   : <><Film className="w-3 h-3" /> AI Video</>}
                 </span>
               </div>
 
               <div className="space-y-5 max-w-2xl">
                 <div className="space-y-2">
-                  <Label className="text-sm font-semibold">{t.studio.creativeTitle} <span className="text-muted-foreground font-normal">{t.studio.creativeTitleHint}</span></Label>
+                  <Label className="text-sm font-semibold">
+                    {t.studio.creativeTitle} <span className="text-muted-foreground font-normal">{t.studio.creativeTitleHint}</span>
+                  </Label>
                   <Input
                     data-testid="input-creative-title"
                     placeholder={`e.g. ${formData.productName || "My Product"} – ${formData.formatName || "Instagram Post"}`}
                     value={formData.title || ""}
-                    onChange={e => setFormData({...formData, title: e.target.value})}
-                    className="h-12 rounded-xl"
+                    onChange={e => setFormData({ ...formData, title: e.target.value })}
+                    className="h-11 rounded-xl"
                   />
                 </div>
 
@@ -513,14 +509,14 @@ export default function Studio() {
                       data-testid="input-product-name"
                       placeholder={t.studio.productNamePlaceholder}
                       value={formData.productName || ""}
-                      onChange={e => setFormData({...formData, productName: e.target.value})}
-                      className="h-12 rounded-xl"
+                      onChange={e => setFormData({ ...formData, productName: e.target.value })}
+                      className="h-11 rounded-xl"
                     />
                   </div>
                   <div className="space-y-2">
                     <Label className="text-sm font-semibold">{t.studio.campaignGoal}</Label>
-                    <Select value={formData.goal} onValueChange={v => setFormData({...formData, goal: v})}>
-                      <SelectTrigger className="h-12 rounded-xl" data-testid="select-campaign-goal">
+                    <Select value={formData.goal} onValueChange={v => setFormData({ ...formData, goal: v })}>
+                      <SelectTrigger className="h-11 rounded-xl" data-testid="select-campaign-goal">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -540,33 +536,33 @@ export default function Studio() {
                     data-testid="input-product-description"
                     placeholder={t.studio.productDescPlaceholder}
                     value={formData.productDescription || ""}
-                    onChange={e => setFormData({...formData, productDescription: e.target.value})}
-                    className="min-h-[120px] rounded-xl resize-none"
+                    onChange={e => setFormData({ ...formData, productDescription: e.target.value })}
+                    className="min-h-[110px] rounded-xl resize-none"
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <Label className="text-sm font-semibold">{t.studio.targetAudience} <span className="text-muted-foreground font-normal">{t.studio.targetAudienceHint}</span></Label>
+                  <Label className="text-sm font-semibold">
+                    {t.studio.targetAudience} <span className="text-muted-foreground font-normal">{t.studio.targetAudienceHint}</span>
+                  </Label>
                   <Input
                     data-testid="input-target-audience"
                     placeholder={t.studio.targetAudiencePlaceholder}
                     value={formData.targetAudience || ""}
-                    onChange={e => setFormData({...formData, targetAudience: e.target.value})}
-                    className="h-12 rounded-xl"
+                    onChange={e => setFormData({ ...formData, targetAudience: e.target.value })}
+                    className="h-11 rounded-xl"
                   />
                 </div>
 
                 {/* Video Upload Zone */}
                 {mediaMode === "video-upload" && (
-                  <div className="space-y-3">
+                  <div className="space-y-2">
                     <Label className="text-sm font-semibold">{t.studio.videoFile} <span className="text-destructive">*</span></Label>
                     {videoPreviewUrl ? (
                       <div className="rounded-xl border border-border overflow-hidden relative">
-                        <video src={videoPreviewUrl} className="w-full max-h-64 object-cover" controls />
+                        <video src={videoPreviewUrl} className="w-full max-h-56 object-cover" controls />
                         <Button
-                          type="button"
-                          size="sm"
-                          variant="secondary"
+                          type="button" size="sm" variant="secondary"
                           className="absolute top-2 end-2"
                           onClick={() => { setVideoFile(null); setVideoPreviewUrl(null); }}
                         >
@@ -576,9 +572,9 @@ export default function Studio() {
                     ) : (
                       <div
                         className={`border-2 border-dashed rounded-xl p-10 flex flex-col items-center gap-3 cursor-pointer transition-colors ${
-                          isDragOver ? "border-primary bg-primary/5" : "border-border/60 hover:border-primary/50 hover:bg-muted/30"
+                          isDragOver ? "border-primary bg-primary/5" : "border-border/60 hover:border-primary/50 hover:bg-muted/20"
                         }`}
-                        onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+                        onDragOver={e => { e.preventDefault(); setIsDragOver(true); }}
                         onDragLeave={() => setIsDragOver(false)}
                         onDrop={handleDrop}
                         onClick={() => fileInputRef.current?.click()}
@@ -588,7 +584,7 @@ export default function Studio() {
                           <Video className="w-7 h-7 text-muted-foreground" />
                         </div>
                         <div className="text-center">
-                          <p className="font-semibold text-sm text-foreground">{t.studio.dragDropVideo}</p>
+                          <p className="font-semibold text-sm">{t.studio.dragDropVideo}</p>
                           <p className="text-xs text-muted-foreground mt-1">{t.studio.videoFormats}</p>
                         </div>
                         <input
@@ -596,10 +592,7 @@ export default function Studio() {
                           type="file"
                           accept="video/*"
                           className="hidden"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (file) handleVideoFileSelect(file);
-                          }}
+                          onChange={e => { const f = e.target.files?.[0]; if (f) handleVideoFileSelect(f); }}
                           data-testid="input-video-file"
                         />
                       </div>
@@ -607,8 +600,21 @@ export default function Studio() {
                   </div>
                 )}
 
+                {/* AI Video info banner */}
+                {mediaMode === "video-ai" && (
+                  <div className="flex items-start gap-3 p-4 rounded-xl bg-indigo-500/10 border border-indigo-500/25">
+                    <Film className="w-5 h-5 text-indigo-400 mt-0.5 shrink-0" />
+                    <div>
+                      <p className="text-sm font-semibold text-indigo-400">Real MP4 video generation</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        AI generates a professional ad image, then FFmpeg renders it into a 9-second MP4 with Ken Burns zoom + animated text overlay. Takes ~60–90 seconds.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
                 <div className="pt-2 border-t border-border/50 flex gap-3">
-                  <Button variant="outline" onClick={() => setStep(1)} className="h-12 px-6 rounded-xl">
+                  <Button variant="outline" onClick={() => setStep(1)} className="h-11 px-6 rounded-xl">
                     <ArrowLeft className="w-4 h-4 me-2" /> {t.studio.backBtn}
                   </Button>
                   <Button
@@ -616,16 +622,17 @@ export default function Studio() {
                     onClick={handleNext}
                     disabled={isPending}
                     data-testid="button-generate"
-                    className="flex-1 h-12 rounded-xl shadow-lg shadow-primary/25 bg-gradient-to-r from-primary to-purple-500 hover:opacity-90"
+                    className="flex-1 h-11 rounded-xl bg-gradient-to-r from-primary to-purple-500 hover:opacity-90 border-0 shadow-lg shadow-primary/20"
                   >
-                    {isPending
-                      ? <><Loader2 className="w-4 h-4 animate-spin me-2" /> {t.studio.starting}</>
-                      : mediaMode === "video-upload"
-                        ? <><Upload className="w-4 h-4 me-2" /> {t.studio.uploadVideoBtn}</>
-                        : mediaMode === "video-ai"
-                          ? <><Film className="w-4 h-4 me-2" /> {t.studio.generateVideoBtn}</>
-                          : <><Sparkles className="w-4 h-4 me-2" /> {t.studio.generateBtn}</>
-                    }
+                    {isPending ? (
+                      <><Loader2 className="w-4 h-4 animate-spin me-2" /> {t.studio.starting}</>
+                    ) : mediaMode === "video-upload" ? (
+                      <><Upload className="w-4 h-4 me-2" /> {t.studio.uploadVideoBtn}</>
+                    ) : mediaMode === "video-ai" ? (
+                      <><Film className="w-4 h-4 me-2" /> {t.studio.generateVideoBtn}</>
+                    ) : (
+                      <><Sparkles className="w-4 h-4 me-2" /> {t.studio.generateBtn}</>
+                    )}
                   </Button>
                 </div>
               </div>
@@ -633,172 +640,256 @@ export default function Studio() {
           </motion.div>
         )}
 
-        {/* STEP 3 - Result */}
+        {/* ════════════════ STEP 3 ════════════════ */}
         {step === 3 && (
-          <motion.div key="step3" initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }}>
-            {(!resultCreative || resultCreative.status === "generating") ? (
-              <div className="glass-card rounded-2xl p-16 flex flex-col items-center justify-center text-center space-y-6 min-h-[440px]">
+          <motion.div key="step3" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }}>
+
+            {/* ── Generating ── */}
+            {(!resultCreative || resultCreative.status === "generating") && (
+              <div className="rounded-2xl border border-border/60 bg-card p-10 flex flex-col items-center justify-center text-center space-y-8 min-h-[480px]">
+                {/* Pulsing orb */}
                 <div className="relative">
-                  <div className="w-20 h-20 rounded-2xl bg-primary/10 flex items-center justify-center">
-                    <Loader2 className="w-10 h-10 text-primary animate-spin" />
+                  <div className="absolute -inset-6 bg-primary/10 rounded-full blur-2xl animate-pulse" />
+                  <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary to-purple-500 flex items-center justify-center shadow-xl shadow-primary/30 relative">
+                    {mediaMode === "video-ai" ? (
+                      <Film className="w-9 h-9 text-white animate-pulse" />
+                    ) : (
+                      <Sparkles className="w-9 h-9 text-white animate-pulse" />
+                    )}
                   </div>
-                  <div className="absolute -inset-3 bg-primary/5 rounded-full blur-xl animate-pulse" />
                 </div>
-                <div>
-                  <h3 className="text-2xl font-bold mb-2">
+
+                <div className="space-y-2">
+                  <h3 className="text-2xl font-extrabold">
                     {mediaMode === "video-ai" ? t.studio.generatingVideoTitle : t.studio.generatingTitle}
                   </h3>
-                  <p className="text-muted-foreground">
-                    {mediaMode === "video-ai" ? t.studio.generatingVideoSubtitle : t.studio.generatingSubtitle}
+                  <p className="text-muted-foreground text-sm max-w-xs mx-auto">
+                    {mediaMode === "video-ai"
+                      ? "Generating image → rendering MP4 with FFmpeg. ~60–90 seconds."
+                      : t.studio.generatingSubtitle}
                   </p>
                 </div>
-                <div className="w-full max-w-sm space-y-3">
-                  {(mediaMode === "video-ai"
-                    ? [t.studio.writingCopy, t.studio.generatingVideo, t.studio.finalizing]
-                    : [t.studio.writingCopy, t.studio.generatingImage, t.studio.finalizing]
-                  ).map((label, i) => (
-                    <div key={label} className="flex items-center gap-3 text-sm text-muted-foreground">
-                      <div className="w-5 h-5 rounded-full border-2 border-primary/30 flex items-center justify-center">
-                        <Loader2 className="w-3 h-3 text-primary animate-spin" style={{ animationDelay: `${i * 0.3}s` }} />
+
+                {/* Steps progress */}
+                <div className="w-full max-w-xs space-y-3">
+                  {progressSteps.map((s, i) => {
+                    const Icon = s.icon;
+                    const isDone   = i < progressStep;
+                    const isActive = i === progressStep;
+                    return (
+                      <div
+                        key={i}
+                        className={`flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-500 ${
+                          isDone   ? "bg-emerald-500/10 border border-emerald-500/20"
+                          : isActive ? "bg-primary/10 border border-primary/20"
+                          : "opacity-30"
+                        }`}
+                      >
+                        <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                          isDone ? "bg-emerald-500" : isActive ? "bg-primary" : "bg-muted"
+                        }`}>
+                          {isDone ? (
+                            <CheckCircle2 className="w-4 h-4 text-white" />
+                          ) : isActive ? (
+                            <Loader2 className="w-4 h-4 text-white animate-spin" />
+                          ) : (
+                            <Icon className="w-4 h-4 text-muted-foreground" />
+                          )}
+                        </div>
+                        <span className={`text-sm font-medium ${
+                          isDone ? "text-emerald-500" : isActive ? "text-foreground" : "text-muted-foreground"
+                        }`}>
+                          {lang === "ar" ? s.labelAr : s.label}
+                        </span>
                       </div>
-                      {label}
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
+
+                {mediaMode === "video-ai" && (
+                  <p className="text-xs text-muted-foreground animate-pulse">
+                    FFmpeg is rendering your MP4…
+                  </p>
+                )}
               </div>
-            ) : resultCreative.status === "failed" ? (
-              <div className="glass-card rounded-2xl p-12 text-center space-y-4">
+            )}
+
+            {/* ── Failed ── */}
+            {resultCreative?.status === "failed" && (
+              <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-12 text-center space-y-5">
                 <div className="w-16 h-16 bg-destructive/10 rounded-full flex items-center justify-center mx-auto">
                   <AlertCircle className="w-8 h-8 text-destructive" />
                 </div>
-                <h3 className="text-2xl font-bold">{t.studio.failed}</h3>
-                <p className="text-muted-foreground max-w-md mx-auto">{t.studio.failedDesc}</p>
+                <div>
+                  <h3 className="text-2xl font-bold">{t.studio.failed}</h3>
+                  <p className="text-muted-foreground text-sm mt-1 max-w-md mx-auto">{t.studio.failedDesc}</p>
+                </div>
                 <div className="flex gap-3 justify-center pt-2">
-                  <Button onClick={() => setStep(2)} variant="outline" className="rounded-xl">{t.studio.tryAgain}</Button>
-                  <Button onClick={handleCreateAnother} className="rounded-xl">{t.studio.newCreative}</Button>
+                  <Button onClick={() => { setStep(2); setGeneratingId(null); }} variant="outline" className="rounded-xl gap-2">
+                    <RefreshCw className="w-4 h-4" /> {t.studio.tryAgain}
+                  </Button>
+                  <Button onClick={handleCreateAnother} className="rounded-xl gap-2">
+                    <Sparkles className="w-4 h-4" /> {t.studio.newCreative}
+                  </Button>
                 </div>
               </div>
-            ) : (
-              <div className="grid md:grid-cols-2 gap-6">
+            )}
+
+            {/* ── Ready ── */}
+            {resultCreative && resultCreative.status === "ready" && (
+              <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="grid md:grid-cols-2 gap-6">
+
                 {/* Media Preview */}
                 <div className="space-y-4">
-                  <div className="glass-card rounded-2xl overflow-hidden">
-                    <div className="bg-muted/50 aspect-square flex items-center justify-center relative group overflow-hidden">
-                      {resultIsVideo && resultCreative.videoUrl ? (
+                  {/* Video player / image */}
+                  <div className="rounded-2xl border border-border/60 overflow-hidden bg-black">
+                    {resultIsVideo && resultCreative.videoUrl ? (
+                      <div className="relative aspect-square bg-black">
                         <video
                           src={resultCreative.videoUrl}
-                          className="w-full h-full object-cover"
+                          className="w-full h-full object-contain"
                           controls
+                          autoPlay
                           playsInline
+                          loop
                         />
-                      ) : resultCreative.imageData ? (
-                        <>
-                          <img src={resultCreative.imageData} alt="Generated Ad" className="w-full h-full object-cover" />
-                          <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                            <Button variant="secondary" className="rounded-full shadow-2xl" onClick={handleDownload} data-testid="button-download-hover">
-                              <Download className="w-4 h-4 me-2" /> {t.studio.downloadImage}
-                            </Button>
-                          </div>
-                        </>
-                      ) : (
-                        <span className="text-muted-foreground">Preview unavailable</span>
-                      )}
-                    </div>
+                        <div className="absolute top-2 start-2">
+                          <span className="bg-black/70 text-white text-[10px] font-bold px-2 py-1 rounded-lg flex items-center gap-1 backdrop-blur-sm">
+                            <Play className="w-2.5 h-2.5 fill-white" /> MP4 · 9s · 1080×1080
+                          </span>
+                        </div>
+                      </div>
+                    ) : resultCreative.imageData ? (
+                      <div className="relative aspect-square group">
+                        <img src={resultCreative.imageData} alt="Generated Ad" className="w-full h-full object-cover" />
+                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                          <Button variant="secondary" className="rounded-full shadow-2xl gap-2" onClick={handleDownload}>
+                            <Download className="w-4 h-4" /> Download PNG
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="aspect-square flex items-center justify-center text-muted-foreground">
+                        Preview unavailable
+                      </div>
+                    )}
                   </div>
 
-                  <div className="flex gap-3">
-                    <Button className="flex-1 h-11 rounded-xl shadow-md" onClick={handleDownload} data-testid="button-download-image">
-                      <Download className="w-4 h-4 me-2" />
+                  {/* Download + Library buttons */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <Button className="h-11 rounded-xl gap-2 shadow-md" onClick={handleDownload} data-testid="button-download">
+                      <Download className="w-4 h-4" />
                       {resultIsVideo ? t.studio.downloadVideo : t.studio.downloadImage}
                     </Button>
-                    <Button variant="outline" className="flex-1 h-11 rounded-xl" onClick={() => setLocation('/library')}>
-                      <Library className="w-4 h-4 me-2" /> {t.studio.viewLibrary}
+                    <Button variant="outline" className="h-11 rounded-xl gap-2" onClick={() => setLocation("/library")}>
+                      <Library className="w-4 h-4" /> {t.studio.viewLibrary}
                     </Button>
                   </div>
 
-                  <Button variant="ghost" className="w-full h-11 rounded-xl border border-dashed border-border" onClick={handleCreateAnother} data-testid="button-create-another">
-                    <Sparkles className="w-4 h-4 me-2" /> {t.studio.createAnother}
+                  <Button
+                    variant="ghost"
+                    className="w-full h-10 rounded-xl border border-dashed border-border gap-2"
+                    onClick={handleCreateAnother}
+                    data-testid="button-create-another"
+                  >
+                    <Sparkles className="w-4 h-4" /> {t.studio.createAnother}
                   </Button>
                 </div>
 
                 {/* Details Panel */}
                 <div className="space-y-4">
-                  <div className="glass-card rounded-2xl p-5 space-y-5">
+                  <div className="rounded-2xl border border-border/60 bg-card p-5 space-y-5">
+                    {/* Title + badges + score */}
                     <div className="flex justify-between items-start gap-3">
-                      <div>
-                        <h3 className="text-lg font-bold">{resultCreative.title}</h3>
-                        <div className="flex items-center gap-2 mt-1.5">
-                          <span className="px-2.5 py-1 text-xs font-bold bg-secondary rounded-lg capitalize">{resultCreative.platform}</span>
-                          <span className="text-xs text-muted-foreground">{resultCreative.formatName} · {resultCreative.formatSize}</span>
+                      <div className="min-w-0">
+                        <h3 className="text-lg font-bold truncate">{resultCreative.title}</h3>
+                        <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                          <span className="px-2 py-0.5 text-xs font-bold bg-secondary rounded-lg capitalize">{resultCreative.platform}</span>
+                          <span className="text-xs text-muted-foreground">{resultCreative.formatName}</span>
                           {resultIsVideo && (
-                            <span className="px-2 py-0.5 text-xs font-bold bg-purple-500/15 text-purple-500 rounded-md border border-purple-500/30 flex items-center gap-1">
-                              <Video className="w-3 h-3" /> Video
+                            <span className="px-2 py-0.5 text-xs font-bold bg-purple-500/15 text-purple-400 rounded-md border border-purple-500/30 flex items-center gap-1">
+                              <Film className="w-3 h-3" /> MP4 Video
                             </span>
                           )}
                         </div>
                       </div>
-                      {!resultIsVideo && (
+                      {resultCreative.performanceScore && (
                         <div className="flex flex-col items-center shrink-0">
-                          <div className="relative w-14 h-14">
-                            <svg className="w-full h-full -rotate-90" viewBox="0 0 56 56">
-                              <circle cx="28" cy="28" r="24" fill="none" stroke="currentColor" strokeWidth="4" className="text-green-500/20" />
-                              <circle cx="28" cy="28" r="24" fill="none" stroke="currentColor" strokeWidth="4" className="text-green-500"
-                                strokeDasharray={`${2 * Math.PI * 24}`}
-                                strokeDashoffset={`${2 * Math.PI * 24 * (1 - (resultCreative.performanceScore || 80) / 100)}`}
+                          <div className="relative w-13 h-13">
+                            <svg className="w-12 h-12 -rotate-90" viewBox="0 0 48 48">
+                              <circle cx="24" cy="24" r="20" fill="none" stroke="currentColor" strokeWidth="3.5" className="text-emerald-500/20" />
+                              <circle cx="24" cy="24" r="20" fill="none" stroke="currentColor" strokeWidth="3.5" className="text-emerald-500"
+                                strokeDasharray={`${2 * Math.PI * 20}`}
+                                strokeDashoffset={`${2 * Math.PI * 20 * (1 - resultCreative.performanceScore / 100)}`}
                                 strokeLinecap="round"
                               />
                             </svg>
-                            <span className="absolute inset-0 flex items-center justify-center font-bold text-green-500 text-base">
-                              {resultCreative.performanceScore || 80}
+                            <span className="absolute inset-0 flex items-center justify-center font-bold text-emerald-500 text-sm">
+                              {resultCreative.performanceScore}
                             </span>
                           </div>
-                          <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider mt-1">{t.studio.score}</span>
+                          <span className="text-[9px] text-muted-foreground font-bold uppercase tracking-wider mt-0.5">Score</span>
                         </div>
                       )}
                     </div>
 
+                    {/* Ad Copy */}
                     {resultCreative.adCopy && (
                       <div className="space-y-3">
-                        <div className="bg-background/50 rounded-xl p-4 border border-border/50">
-                          <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1.5">{t.studio.headline}</p>
-                          <p className="font-bold text-base">{(resultCreative.adCopy as any)?.headline}</p>
-                        </div>
-                        <div className="bg-background/50 rounded-xl p-4 border border-border/50">
-                          <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1.5">{t.studio.bodyCopy}</p>
-                          <p className="text-sm leading-relaxed">{(resultCreative.adCopy as any)?.description}</p>
-                        </div>
-                        <div className="bg-background/50 rounded-xl p-4 border border-border/50">
-                          <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1.5">{t.studio.callToAction}</p>
-                          <span className="inline-block px-4 py-2 bg-primary text-primary-foreground font-bold rounded-lg text-sm">
-                            {(resultCreative.adCopy as any)?.cta}
-                          </span>
-                        </div>
+                        {[
+                          { key: "headline",    label: t.studio.headline,    icon: TrendingUp },
+                          { key: "description", label: t.studio.bodyCopy,    icon: Layers },
+                          { key: "cta",         label: t.studio.callToAction, icon: Target },
+                        ].map(({ key, label, icon: Icon }) => (
+                          <div key={key} className="bg-background/60 rounded-xl p-3.5 border border-border/50">
+                            <div className="flex items-center gap-1.5 mb-1.5">
+                              <Icon className="w-3 h-3 text-muted-foreground" />
+                              <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">{label}</p>
+                            </div>
+                            {key === "cta" ? (
+                              <span className="inline-block px-4 py-1.5 bg-primary text-primary-foreground font-bold rounded-lg text-sm">
+                                {(resultCreative.adCopy as any)?.[key]}
+                              </span>
+                            ) : (
+                              <p className={`font-semibold ${key === "headline" ? "text-base" : "text-sm text-muted-foreground"}`}>
+                                {(resultCreative.adCopy as any)?.[key]}
+                              </p>
+                            )}
+                          </div>
+                        ))}
                       </div>
                     )}
                   </div>
 
-                  {!resultIsVideo && (
-                    <div className="glass-card rounded-2xl p-4">
-                      <p className="text-xs text-muted-foreground mb-3 font-semibold uppercase tracking-wider">{t.studio.performanceBreakdown}</p>
+                  {/* Performance breakdown */}
+                  {!resultIsVideo && resultCreative.performanceScore && (
+                    <div className="rounded-2xl border border-border/60 bg-card p-4">
+                      <div className="flex items-center gap-2 mb-4">
+                        <Eye className="w-4 h-4 text-muted-foreground" />
+                        <p className="text-xs text-muted-foreground font-bold uppercase tracking-wider">{t.studio.performanceBreakdown}</p>
+                      </div>
                       {[
                         { label: t.studio.headlineImpact, val: 88 },
-                        { label: t.studio.copyCl, val: 92 },
-                        { label: t.studio.ctaStrength, val: 85 },
+                        { label: t.studio.copyCl,         val: 92 },
+                        { label: t.studio.ctaStrength,    val: 85 },
                       ].map(({ label, val }) => (
-                        <div key={label} className="mb-3">
-                          <div className="flex justify-between text-xs mb-1">
+                        <div key={label} className="mb-3 last:mb-0">
+                          <div className="flex justify-between text-xs mb-1.5">
                             <span className="text-muted-foreground">{label}</span>
-                            <span className="font-bold text-green-500">{val}%</span>
+                            <span className="font-bold text-emerald-500">{val}%</span>
                           </div>
                           <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                            <div className="h-full bg-gradient-to-r from-green-500 to-emerald-400 rounded-full" style={{ width: `${val}%` }} />
+                            <div
+                              className="h-full bg-gradient-to-r from-emerald-500 to-green-400 rounded-full transition-all duration-1000"
+                              style={{ width: `${val}%` }}
+                            />
                           </div>
                         </div>
                       ))}
                     </div>
                   )}
                 </div>
-              </div>
+              </motion.div>
             )}
           </motion.div>
         )}
