@@ -215,7 +215,7 @@ const translations = {
       businessDesc: "For agencies and large teams",
       freePrice: "$0",
       proPrice: "$7",
-      businessPrice: "$7",
+      businessPrice: "$14",
       features: "Features",
       freePlanFeatures: [
         "5 AI-generated creatives/month",
@@ -511,7 +511,7 @@ const translations = {
       businessDesc: "للوكالات والفرق الكبيرة",
       freePrice: "$0",
       proPrice: "$7",
-      businessPrice: "$7",
+      businessPrice: "$14",
       features: "المميزات",
       freePlanFeatures: [
         "5 إعلانات بالذكاء الاصطناعي/شهر",
