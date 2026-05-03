@@ -572,6 +572,40 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // ── AD ACCOUNTS ──────────────────────────────────────────────────────
+  app.get("/api/ad-accounts", async (req, res) => {
+    const userId = req.session?.userId;
+    if (!userId) return res.status(401).json({ message: "Not authenticated" });
+    const accounts = await storage.getAdAccounts(userId);
+    res.json(accounts);
+  });
+
+  app.post("/api/ad-accounts", async (req, res) => {
+    const userId = req.session?.userId;
+    if (!userId) return res.status(401).json({ message: "Not authenticated" });
+    const schema = z.object({
+      platform: z.enum(["meta", "google", "tiktok", "snapchat", "twitter"]),
+      accountId: z.string().min(1),
+      accountName: z.string().min(1),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid data" });
+    const existing = await storage.getAdAccounts(userId);
+    const alreadyConnected = existing.find((a) => a.platform === parsed.data.platform);
+    if (alreadyConnected) return res.status(400).json({ message: "Platform already connected" });
+    const account = await storage.createAdAccount({ ...parsed.data, userId, status: "connected" });
+    res.status(201).json(account);
+  });
+
+  app.delete("/api/ad-accounts/:id", async (req, res) => {
+    const userId = req.session?.userId;
+    if (!userId) return res.status(401).json({ message: "Not authenticated" });
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
+    await storage.deleteAdAccount(id, userId);
+    res.json({ success: true });
+  });
+
   seedDatabase();
 
   return httpServer;

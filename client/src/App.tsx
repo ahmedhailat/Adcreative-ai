@@ -12,6 +12,8 @@ import Brands from "@/pages/Brands";
 import Studio from "@/pages/Studio";
 import Library from "@/pages/Library";
 import Pricing from "@/pages/Pricing";
+import Connections from "@/pages/Connections";
+import Analytics from "@/pages/Analytics";
 import Login from "@/pages/Login";
 import { useAuth } from "@/hooks/use-auth";
 import { LangProvider, useLang } from "@/contexts/LangContext";
@@ -50,6 +52,8 @@ function ProtectedRouter() {
         <Route path="/brands" component={Brands} />
         <Route path="/studio" component={Studio} />
         <Route path="/library" component={Library} />
+        <Route path="/connections" component={Connections} />
+        <Route path="/analytics" component={Analytics} />
         <Route path="/pricing" component={Pricing} />
         <Route component={NotFound} />
       </Switch>

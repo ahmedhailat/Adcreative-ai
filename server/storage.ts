@@ -1,10 +1,11 @@
 import { db } from "./db";
 import { eq, sql } from "drizzle-orm";
 import {
-  brands, creatives, users,
+  brands, creatives, users, adAccounts,
   type Brand, type InsertBrand,
   type Creative, type InsertCreative,
   type User, type InsertUser,
+  type AdAccount, type InsertAdAccount,
   type DashboardStats, type CreativeWithBrand,
 } from "@shared/schema";
 
@@ -27,6 +28,9 @@ export interface IStorage {
   deleteCreative(id: number): Promise<void>;
   getProductsWithPrices(): Promise<any[]>;
   getSubscription(subscriptionId: string): Promise<any>;
+  getAdAccounts(userId: number): Promise<AdAccount[]>;
+  createAdAccount(account: InsertAdAccount): Promise<AdAccount>;
+  deleteAdAccount(id: number, userId: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -118,6 +122,19 @@ export class DatabaseStorage implements IStorage {
 
   async deleteCreative(id: number): Promise<void> {
     await db.delete(creatives).where(eq(creatives.id, id));
+  }
+
+  async getAdAccounts(userId: number): Promise<AdAccount[]> {
+    return db.select().from(adAccounts).where(eq(adAccounts.userId, userId));
+  }
+
+  async createAdAccount(account: InsertAdAccount): Promise<AdAccount> {
+    const [created] = await db.insert(adAccounts).values(account).returning();
+    return created;
+  }
+
+  async deleteAdAccount(id: number, userId: number): Promise<void> {
+    await db.delete(adAccounts).where(eq(adAccounts.id, id));
   }
 
   async getProductsWithPrices(): Promise<any[]> {

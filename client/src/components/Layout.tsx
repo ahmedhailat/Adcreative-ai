@@ -12,7 +12,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { LayoutDashboard, Palette, Wand2, Images, LogOut, ChevronDown, User, Languages, Check, Crown, Zap } from "lucide-react";
+import { LayoutDashboard, Palette, Wand2, Images, LogOut, ChevronDown, User, Languages, Check, Crown, Zap, Link2, BarChart3 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useLang, type Lang } from "@/contexts/LangContext";
 import {
@@ -163,6 +163,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
     { title: t.nav.brands, url: "/brands", icon: Palette },
     { title: t.nav.studio, url: "/studio", icon: Wand2 },
     { title: t.nav.library, url: "/library", icon: Images },
+    { title: t.nav.connections, url: "/connections", icon: Link2 },
+    { title: t.nav.analytics, url: "/analytics", icon: BarChart3 },
     { title: t.nav.pricing, url: "/pricing", icon: Crown },
   ];
 

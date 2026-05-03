@@ -52,6 +52,17 @@ export const creatives = pgTable("creatives", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// === AD ACCOUNTS TABLE ===
+export const adAccounts = pgTable("ad_accounts", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").references(() => users.id).notNull(),
+  platform: text("platform").notNull(), // meta, google, tiktok, snapchat, twitter
+  accountId: text("account_id").notNull(),
+  accountName: text("account_name").notNull(),
+  status: text("status").notNull().default("connected"),
+  connectedAt: timestamp("connected_at").defaultNow(),
+});
+
 // === RELATIONS ===
 export const brandsRelations = relations(brands, ({ many }) => ({
   creatives: many(creatives),
@@ -69,6 +80,9 @@ export const insertCreativeSchema = createInsertSchema(creatives).omit({ id: tru
 });
 
 // === TYPES ===
+export type AdAccount = typeof adAccounts.$inferSelect;
+export type InsertAdAccount = Omit<AdAccount, "id" | "connectedAt">;
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type Brand = typeof brands.$inferSelect;
