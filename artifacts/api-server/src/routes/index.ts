@@ -1,16 +1,10 @@
 import { Router, type IRouter } from "express";
 import healthRouter from "./health";
-import authRouter from "./auth";
-import brandsRouter from "./brands";
-import creativesRouter from "./creatives";
-import dashboardRouter from "./dashboard";
 
 const router: IRouter = Router();
 
+// Only health check is handled locally; all other /api/* requests
+// are transparently proxied to the main server on port 5000.
 router.use(healthRouter);
-router.use(authRouter);
-router.use(brandsRouter);
-router.use(creativesRouter);
-router.use(dashboardRouter);
 
 export default router;

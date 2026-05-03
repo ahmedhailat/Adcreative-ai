@@ -53,8 +53,8 @@ export default function Studio() {
       toast({ title: "Please select a brand and format", variant: "destructive" });
       return;
     }
-    if (step === 2 && (!formData.title || !formData.productName || !formData.productDescription)) {
-      toast({ title: "Please fill in all required fields", variant: "destructive" });
+    if (step === 2 && (!formData.productName || !formData.productDescription)) {
+      toast({ title: "Please fill in the required fields", variant: "destructive" });
       return;
     }
     if (step === 2) {
@@ -66,7 +66,9 @@ export default function Studio() {
 
   const handleGenerate = async () => {
     try {
-      const data = formData as GenerateCreativeInput;
+      const autoTitle = formData.title?.trim()
+        || `${formData.productName} – ${formData.formatName}`;
+      const data = { ...formData, title: autoTitle } as GenerateCreativeInput;
       const created = await generateCreative.mutateAsync(data);
       setGeneratingId(created.id);
       setStep(3);
@@ -258,10 +260,10 @@ export default function Studio() {
 
               <div className="space-y-5 max-w-2xl">
                 <div className="space-y-2">
-                  <Label className="text-sm font-semibold">Creative Title <span className="text-muted-foreground font-normal">(internal name)</span></Label>
+                  <Label className="text-sm font-semibold">Creative Title <span className="text-muted-foreground font-normal">(optional — auto-generated if blank)</span></Label>
                   <Input
                     data-testid="input-creative-title"
-                    placeholder="e.g. Summer Sale 2025 – Instagram Post"
+                    placeholder={`e.g. ${formData.productName || "My Product"} – ${formData.formatName || "Instagram Post"}`}
                     value={formData.title || ""}
                     onChange={e => setFormData({...formData, title: e.target.value})}
                     className="h-12 rounded-xl"
@@ -326,7 +328,7 @@ export default function Studio() {
                   <Button
                     size="lg"
                     onClick={handleNext}
-                    disabled={!formData.title || !formData.productName || !formData.productDescription || generateCreative.isPending}
+                    disabled={!formData.productName || !formData.productDescription || generateCreative.isPending}
                     data-testid="button-generate"
                     className="flex-1 h-12 rounded-xl shadow-lg shadow-primary/25 bg-gradient-to-r from-primary to-purple-500 hover:opacity-90"
                   >
