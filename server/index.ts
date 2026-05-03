@@ -18,6 +18,9 @@ process.on("unhandledRejection", (reason) => {
 const app = express();
 const httpServer = createServer(app);
 
+// Trust Replit's reverse proxy so req.secure is correct and secure cookies are sent
+app.set("trust proxy", 1);
+
 declare module "http" {
   interface IncomingMessage {
     rawBody: unknown;
@@ -42,15 +45,17 @@ app.use(express.urlencoded({ extended: false }));
 
 // ── Session middleware with PG store + memory fallback ─────────────────────
 function buildSessionMiddleware() {
+  // Replit always serves via HTTPS (even in dev), so cookies must be secure + sameSite=none
+  const isHttps = !!process.env.REPL_ID || process.env.NODE_ENV === "production";
   const baseOpts: session.SessionOptions = {
     secret: process.env.SESSION_SECRET || "adcreative-secret-key-2024",
     resave: false,
     saveUninitialized: false,
     cookie: {
-      secure: process.env.NODE_ENV === "production",
+      secure: isHttps,
       httpOnly: true,
       maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      sameSite: isHttps ? "none" : "lax",
     },
   };
 
