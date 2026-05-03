@@ -5,6 +5,16 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 
+// ── Crash protection ───────────────────────────────────────────────────────
+process.on("uncaughtException", (err) => {
+  console.error("[uncaughtException] Server kept alive:", err);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandledRejection] Server kept alive:", reason);
+});
+// ──────────────────────────────────────────────────────────────────────────
+
 const app = express();
 const httpServer = createServer(app);
 
@@ -30,15 +40,9 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 
-// Session middleware
-const PgSession = connectPgSimple(session);
-app.use(
-  session({
-    store: new PgSession({
-      conString: process.env.DATABASE_URL,
-      tableName: "session",
-      createTableIfMissing: true,
-    }),
+// ── Session middleware with PG store + memory fallback ─────────────────────
+function buildSessionMiddleware() {
+  const baseOpts: session.SessionOptions = {
     secret: process.env.SESSION_SECRET || "adcreative-secret-key-2024",
     resave: false,
     saveUninitialized: false,
@@ -48,8 +52,27 @@ app.use(
       maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
       sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
     },
-  })
-);
+  };
+
+  try {
+    const PgSession = connectPgSimple(session);
+    const store = new PgSession({
+      conString: process.env.DATABASE_URL,
+      tableName: "session",
+      createTableIfMissing: true,
+    });
+    store.on("error", (err: Error) => {
+      console.error("[session-store] PG session store error (non-fatal):", err.message);
+    });
+    return session({ ...baseOpts, store });
+  } catch (err) {
+    console.error("[session-store] Failed to create PG store, falling back to memory store:", err);
+    return session(baseOpts);
+  }
+}
+
+app.use(buildSessionMiddleware());
+// ──────────────────────────────────────────────────────────────────────────
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -58,10 +81,10 @@ export function log(message: string, source = "express") {
     second: "2-digit",
     hour12: true,
   });
-
   console.log(`${formattedTime} [${source}] ${message}`);
 }
 
+// ── Request logger ─────────────────────────────────────────────────────────
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
@@ -80,7 +103,6 @@ app.use((req, res, next) => {
       if (capturedJsonResponse) {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }
-
       log(logLine);
     }
   });
@@ -88,20 +110,21 @@ app.use((req, res, next) => {
   next();
 });
 
+// ── Health check (before routes) ───────────────────────────────────────────
+app.get("/api/health", (_req, res) => {
+  res.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+// ──────────────────────────────────────────────────────────────────────────
+
 (async () => {
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
-
-    console.error("Internal Server Error:", err);
-
-    if (res.headersSent) {
-      return next(err);
-    }
-
-    return res.status(status).json({ message });
+    console.error("[express-error]", err);
+    if (res.headersSent) return next(err);
+    res.status(status).json({ message });
   });
 
   if (process.env.NODE_ENV === "production") {
@@ -113,13 +136,7 @@ app.use((req, res, next) => {
 
   const port = parseInt(process.env.PORT || "5000", 10);
   httpServer.listen(
-    {
-      port,
-      host: "0.0.0.0",
-      reusePort: true,
-    },
-    () => {
-      log(`serving on port ${port}`);
-    },
+    { port, host: "0.0.0.0", reusePort: true },
+    () => log(`serving on port ${port}`),
   );
 })();
