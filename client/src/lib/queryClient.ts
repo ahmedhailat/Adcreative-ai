@@ -4,11 +4,17 @@ async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     let message = res.statusText;
     try {
-      const json = await res.json();
-      message = json.message || message;
-    } catch {
       const text = await res.text();
-      if (text) message = text;
+      if (text) {
+        try {
+          const json = JSON.parse(text);
+          message = json.message || text;
+        } catch {
+          message = text;
+        }
+      }
+    } catch {
+      // keep statusText as fallback
     }
     throw new Error(message);
   }
