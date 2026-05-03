@@ -6,7 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Search, Heart, Download, Trash2, Loader2, Image as ImageIcon } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { SiFacebook, SiInstagram, SiGoogle, SiTiktok, SiLinkedin, SiX } from "react-icons/si";
+import { SiFacebook, SiInstagram, SiGoogle, SiTiktok, SiX } from "react-icons/si";
+import { Linkedin as SiLinkedin } from "lucide-react";
 
 const PLATFORM_ICONS: Record<string, any> = {
   facebook: SiFacebook,

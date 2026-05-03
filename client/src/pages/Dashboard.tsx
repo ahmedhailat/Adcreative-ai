@@ -9,7 +9,8 @@ import {
   ArrowRight, Loader2, Heart, Star, Zap, Target,
   BarChart3, CheckCircle2, Clock, FileImage
 } from "lucide-react";
-import { SiFacebook, SiInstagram, SiGoogle, SiTiktok, SiLinkedin, SiX } from "react-icons/si";
+import { SiFacebook, SiInstagram, SiGoogle, SiTiktok, SiX } from "react-icons/si";
+import { Linkedin as SiLinkedin } from "lucide-react";
 import { motion } from "framer-motion";
 
 const PLATFORM_META: Record<string, { label: string; color: string; Icon: any }> = {

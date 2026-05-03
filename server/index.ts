@@ -6,7 +6,12 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 
 // ── Crash protection ───────────────────────────────────────────────────────
-process.on("uncaughtException", (err) => {
+process.on("uncaughtException", (err: any) => {
+  // Port conflict = fatal, must exit so the workflow can restart cleanly
+  if (err.code === "EADDRINUSE") {
+    console.error("[fatal] Port already in use — exiting for clean restart");
+    process.exit(1);
+  }
   console.error("[uncaughtException] Server kept alive:", err);
 });
 
