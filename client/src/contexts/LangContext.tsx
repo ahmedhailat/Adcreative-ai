@@ -218,7 +218,7 @@ const translations = {
       businessPrice: "$14",
       features: "Features",
       freePlanFeatures: [
-        "5 AI-generated creatives/month",
+        "1 campaign per week",
         "2 brand kits",
         "Image creatives only",
         "Basic ad formats",
@@ -226,7 +226,7 @@ const translations = {
         "Download in PNG/JPG",
       ],
       proPlanFeatures: [
-        "100 AI-generated creatives/month",
+        "1 campaign per day",
         "20 brand kits",
         "Image & video creatives",
         "AI video generation",
@@ -237,7 +237,7 @@ const translations = {
         "Download in all formats",
       ],
       businessPlanFeatures: [
-        "Unlimited creatives",
+        "Unlimited campaigns",
         "Unlimited brand kits",
         "Image & video creatives",
         "AI video generation",
@@ -514,7 +514,7 @@ const translations = {
       businessPrice: "$14",
       features: "المميزات",
       freePlanFeatures: [
-        "5 إعلانات بالذكاء الاصطناعي/شهر",
+        "حملة واحدة أسبوعياً",
         "مجموعتان من العلامات التجارية",
         "إعلانات صور فقط",
         "تنسيقات إعلانات أساسية",
@@ -522,7 +522,7 @@ const translations = {
         "تحميل بصيغة PNG/JPG",
       ],
       proPlanFeatures: [
-        "100 إعلان بالذكاء الاصطناعي/شهر",
+        "حملة واحدة يومياً",
         "20 مجموعة علامات تجارية",
         "إعلانات صور وفيديو",
         "توليد الفيديو بالذكاء الاصطناعي",
@@ -533,7 +533,7 @@ const translations = {
         "تحميل بجميع الصيغ",
       ],
       businessPlanFeatures: [
-        "إعلانات غير محدودة",
+        "حملات غير محدودة",
         "مجموعات علامات تجارية غير محدودة",
         "إعلانات صور وفيديو",
         "توليد الفيديو بالذكاء الاصطناعي",

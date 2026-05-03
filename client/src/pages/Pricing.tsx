@@ -245,7 +245,7 @@ export default function Pricing() {
       name: t.pricing.business,
       description: t.pricing.businessDesc,
       price: t.pricing.businessPrice,
-      priceYearly: "$50",
+      priceYearly: "$100",
       features: t.pricing.businessPlanFeatures,
       isPopular: false,
       icon: Building2,
