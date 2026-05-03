@@ -12,7 +12,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { LayoutDashboard, Palette, Wand2, Images, LogOut, ChevronDown, User, Languages, Check } from "lucide-react";
+import { LayoutDashboard, Palette, Wand2, Images, LogOut, ChevronDown, User, Languages, Check, Crown, Zap } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useLang, type Lang } from "@/contexts/LangContext";
 import {
@@ -22,6 +22,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Badge } from "@/components/ui/badge";
 
 function LangToggle() {
   const { lang, setLang } = useLang();
@@ -60,10 +61,30 @@ function LangToggle() {
   );
 }
 
+function PlanBadge({ plan }: { plan: string }) {
+  if (plan === "pro") {
+    return (
+      <Badge className="text-[10px] bg-gradient-to-r from-purple-500 to-indigo-500 text-white border-0 px-2 py-0 h-4">
+        PRO
+      </Badge>
+    );
+  }
+  if (plan === "business") {
+    return (
+      <Badge className="text-[10px] bg-gradient-to-r from-yellow-500 to-orange-500 text-white border-0 px-2 py-0 h-4">
+        BIZ
+      </Badge>
+    );
+  }
+  return null;
+}
+
 function UserMenu() {
   const { user, logout, isLoggingOut } = useAuth();
   const { t } = useLang();
   if (!user) return null;
+
+  const userPlan = (user as any)?.plan ?? "free";
 
   const initials = user.name
     .split(" ")
@@ -83,7 +104,10 @@ function UserMenu() {
             {initials}
           </div>
           <div className="flex-1 text-left min-w-0">
-            <p className="text-sm font-semibold text-sidebar-foreground truncate">{user.name}</p>
+            <div className="flex items-center gap-1.5">
+              <p className="text-sm font-semibold text-sidebar-foreground truncate">{user.name}</p>
+              <PlanBadge plan={userPlan} />
+            </div>
             <p className="text-xs text-muted-foreground truncate">{user.email}</p>
           </div>
           <ChevronDown className="w-3 h-3 text-muted-foreground shrink-0" />
@@ -91,7 +115,10 @@ function UserMenu() {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-52">
         <div className="px-3 py-2">
-          <p className="text-sm font-semibold">{user.name}</p>
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-semibold">{user.name}</p>
+            <PlanBadge plan={userPlan} />
+          </div>
           <p className="text-xs text-muted-foreground">{user.email}</p>
         </div>
         <DropdownMenuSeparator />
@@ -99,6 +126,17 @@ function UserMenu() {
           <User className="w-4 h-4" />
           {t.layout.profile}
         </DropdownMenuItem>
+        {userPlan === "free" && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem asChild className="gap-2 cursor-pointer text-purple-500 focus:text-purple-500 focus:bg-purple-500/10">
+              <Link href="/pricing">
+                <Crown className="w-4 h-4" />
+                {t.layout.upgradeToPro}
+              </Link>
+            </DropdownMenuItem>
+          </>
+        )}
         <DropdownMenuSeparator />
         <DropdownMenuItem
           onClick={logout}
@@ -117,12 +155,15 @@ function UserMenu() {
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { t } = useLang();
+  const { user } = useAuth();
+  const userPlan = (user as any)?.plan ?? "free";
 
   const navItems = [
     { title: t.nav.dashboard, url: "/", icon: LayoutDashboard },
     { title: t.nav.brands, url: "/brands", icon: Palette },
     { title: t.nav.studio, url: "/studio", icon: Wand2 },
     { title: t.nav.library, url: "/library", icon: Images },
+    { title: t.nav.pricing, url: "/pricing", icon: Crown },
   ];
 
   const style = {
@@ -167,6 +208,23 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 </SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>
+
+            {/* Upgrade banner for free users */}
+            {userPlan === "free" && (
+              <div className="px-3 pb-3">
+                <Link href="/pricing">
+                  <div className="rounded-xl bg-gradient-to-br from-purple-500/20 to-indigo-500/20 border border-purple-500/30 p-3.5 cursor-pointer hover:border-purple-500/50 transition-colors group">
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <Zap className="w-4 h-4 text-purple-400" />
+                      <span className="text-xs font-bold text-purple-400">{t.layout.upgradeToPro}</span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      Unlock video generation & more creatives
+                    </p>
+                  </div>
+                </Link>
+              </div>
+            )}
 
             {/* User section at bottom */}
             <div className="p-3 border-t border-sidebar-border mt-auto">

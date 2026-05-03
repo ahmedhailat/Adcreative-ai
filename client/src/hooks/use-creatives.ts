@@ -9,7 +9,7 @@ export function useCreatives(brandId?: number) {
       if (brandId) url += `?brandId=${brandId}`;
       const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch creatives");
-      return await res.json(); // Array of CreativeWithBrand
+      return await res.json();
     },
   });
 }
@@ -35,7 +35,7 @@ export function useCreative(id: number | null) {
 export function useGenerateCreative() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (data: GenerateCreativeInput) => {
+    mutationFn: async (data: GenerateCreativeInput & { mediaType?: string }) => {
       const res = await fetch(api.creatives.generate.path, {
         method: api.creatives.generate.method,
         headers: { "Content-Type": "application/json" },
@@ -46,7 +46,49 @@ export function useGenerateCreative() {
         const err = await res.json();
         throw new Error(err.message || "Failed to start generation");
       }
-      return await res.json(); // Returns created Creative (status: "generating")
+      return await res.json();
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [api.creatives.list.path] }),
+  });
+}
+
+export function useUploadVideo() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: {
+      file: File;
+      brandId: number;
+      title: string;
+      platform: string;
+      formatSize: string;
+      formatName: string;
+      productName: string;
+      productDescription: string;
+      goal: string;
+      targetAudience?: string;
+    }) => {
+      const formData = new FormData();
+      formData.append("video", data.file);
+      formData.append("brandId", String(data.brandId));
+      formData.append("title", data.title);
+      formData.append("platform", data.platform);
+      formData.append("formatSize", data.formatSize);
+      formData.append("formatName", data.formatName);
+      formData.append("productName", data.productName);
+      formData.append("productDescription", data.productDescription);
+      formData.append("goal", data.goal);
+      if (data.targetAudience) formData.append("targetAudience", data.targetAudience);
+
+      const res = await fetch("/api/creatives/upload-video", {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message || "Failed to upload video");
+      }
+      return await res.json();
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: [api.creatives.list.path] }),
   });

@@ -11,6 +11,7 @@ import Dashboard from "@/pages/Dashboard";
 import Brands from "@/pages/Brands";
 import Studio from "@/pages/Studio";
 import Library from "@/pages/Library";
+import Pricing from "@/pages/Pricing";
 import Login from "@/pages/Login";
 import { useAuth } from "@/hooks/use-auth";
 import { LangProvider, useLang } from "@/contexts/LangContext";
@@ -49,6 +50,7 @@ function ProtectedRouter() {
         <Route path="/brands" component={Brands} />
         <Route path="/studio" component={Studio} />
         <Route path="/library" component={Library} />
+        <Route path="/pricing" component={Pricing} />
         <Route component={NotFound} />
       </Switch>
     </Layout>

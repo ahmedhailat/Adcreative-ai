@@ -1,9 +1,10 @@
-import { useState } from "react";
-import { useLocation } from "wouter";
+import { useState, useRef, useCallback } from "react";
+import { useLocation, Link } from "wouter";
 import { AD_FORMATS, type GenerateCreativeInput } from "@shared/schema";
 import { useBrands } from "@/hooks/use-brands";
-import { useGenerateCreative, useCreative } from "@/hooks/use-creatives";
+import { useGenerateCreative, useCreative, useUploadVideo } from "@/hooks/use-creatives";
 import { useLang } from "@/contexts/LangContext";
+import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,7 +12,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SiFacebook, SiInstagram, SiGoogle, SiTiktok, SiX } from "react-icons/si";
 import { Linkedin as SiLinkedin } from "lucide-react";
-import { ArrowRight, ArrowLeft, Loader2, CheckCircle2, AlertCircle, Wand2, Download, Sparkles, Library } from "lucide-react";
+import {
+  ArrowRight, ArrowLeft, Loader2, CheckCircle2, AlertCircle, Wand2,
+  Download, Sparkles, Library, Image as ImageIcon, Video, Upload,
+  Crown, Zap, Film, Lock,
+} from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useToast } from "@/hooks/use-toast";
 
@@ -33,22 +38,78 @@ const PLATFORM_COLORS: Record<string, string> = {
   twitter: "#1da1f2",
 };
 
+type MediaMode = "image" | "video-upload" | "video-ai";
+
+function UpgradeProBanner({ message, ctaLabel }: { message: string; ctaLabel: string }) {
+  return (
+    <div className="rounded-xl border border-purple-500/30 bg-gradient-to-br from-purple-500/10 to-indigo-500/10 p-5 flex items-start gap-4">
+      <div className="w-10 h-10 rounded-xl bg-purple-500/20 flex items-center justify-center shrink-0">
+        <Lock className="w-5 h-5 text-purple-500" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="font-semibold text-foreground text-sm mb-1 flex items-center gap-2">
+          <Crown className="w-4 h-4 text-yellow-500" /> Pro Feature
+        </p>
+        <p className="text-sm text-muted-foreground">{message}</p>
+      </div>
+      <Button size="sm" className="shrink-0 bg-gradient-to-r from-purple-500 to-indigo-500 hover:opacity-90 text-white" asChild>
+        <Link href="/pricing">
+          <Zap className="w-3.5 h-3.5 me-1.5" />
+          {ctaLabel}
+        </Link>
+      </Button>
+    </div>
+  );
+}
+
 export default function Studio() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const { t } = useLang();
+  const { user } = useAuth();
   const { data: brands, isLoading: brandsLoading } = useBrands();
   const generateCreative = useGenerateCreative();
+  const uploadVideo = useUploadVideo();
 
   const [step, setStep] = useState(1);
   const [generatingId, setGeneratingId] = useState<number | null>(null);
   const { data: resultCreative } = useCreative(generatingId);
 
+  const [mediaMode, setMediaMode] = useState<MediaMode>("image");
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const [formData, setFormData] = useState<Partial<GenerateCreativeInput>>({
     goal: "awareness"
   });
 
+  const userPlan = (user as any)?.plan ?? "free";
+  const isPro = userPlan === "pro" || userPlan === "business";
+
   const STEP_LABELS = [t.studio.step1, t.studio.step2, t.studio.step3];
+
+  const handleVideoFileSelect = useCallback((file: File) => {
+    if (!file.type.startsWith("video/")) {
+      toast({ title: "Invalid file", description: "Please upload a video file (MP4, WebM, MOV).", variant: "destructive" });
+      return;
+    }
+    if (file.size > 100 * 1024 * 1024) {
+      toast({ title: "File too large", description: "Max file size is 100MB.", variant: "destructive" });
+      return;
+    }
+    setVideoFile(file);
+    const url = URL.createObjectURL(file);
+    setVideoPreviewUrl(url);
+  }, [toast]);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleVideoFileSelect(file);
+  }, [handleVideoFileSelect]);
 
   const handleNext = () => {
     if (step === 1) {
@@ -65,15 +126,19 @@ export default function Studio() {
         return;
       }
     }
-    if (step === 2 && (!formData.productName || !formData.productDescription)) {
-      if (!formData.productName) {
-        toast({ title: t.studio.productNameRequired, description: t.studio.productNameRequiredDesc, variant: "destructive" });
-      } else {
-        toast({ title: t.studio.productDescRequired, description: t.studio.productDescRequiredDesc, variant: "destructive" });
-      }
-      return;
-    }
     if (step === 2) {
+      if (!formData.productName || !formData.productDescription) {
+        if (!formData.productName) {
+          toast({ title: t.studio.productNameRequired, description: t.studio.productNameRequiredDesc, variant: "destructive" });
+        } else {
+          toast({ title: t.studio.productDescRequired, description: t.studio.productDescRequiredDesc, variant: "destructive" });
+        }
+        return;
+      }
+      if (mediaMode === "video-upload" && !videoFile) {
+        toast({ title: "No video selected", description: "Please select a video file to upload.", variant: "destructive" });
+        return;
+      }
       handleGenerate();
     } else {
       setStep(s => s + 1);
@@ -83,21 +148,61 @@ export default function Studio() {
   const handleGenerate = async () => {
     try {
       const autoTitle = formData.title?.trim()
-        || `${formData.productName} – ${formData.formatName}`;
-      const data = { ...formData, title: autoTitle } as GenerateCreativeInput;
-      const created = await generateCreative.mutateAsync(data);
-      setGeneratingId(created.id);
-      setStep(3);
+        || `${formData.productName ?? ""} – ${formData.formatName ?? ""}`;
+
+      const brandId = formData.brandId!;
+      const platform = formData.platform!;
+      const formatSize = formData.formatSize!;
+      const formatName = formData.formatName!;
+      const productName = formData.productName!;
+      const productDescription = formData.productDescription!;
+      const goal = formData.goal!;
+      const targetAudience = formData.targetAudience;
+
+      if (mediaMode === "video-upload" && videoFile) {
+        const result = await uploadVideo.mutateAsync({
+          file: videoFile,
+          brandId,
+          title: autoTitle,
+          platform,
+          formatSize,
+          formatName,
+          productName,
+          productDescription,
+          goal,
+          targetAudience,
+        });
+        setGeneratingId(result.id);
+        setStep(3);
+      } else if (mediaMode === "video-ai") {
+        const created = await generateCreative.mutateAsync({
+          brandId, platform, formatSize, formatName, productName,
+          productDescription, goal, targetAudience, title: autoTitle,
+          mediaType: "video",
+        } as any);
+        setGeneratingId(created.id);
+        setStep(3);
+      } else {
+        const created = await generateCreative.mutateAsync({
+          brandId, platform, formatSize, formatName, productName,
+          productDescription, goal, targetAudience, title: autoTitle,
+        });
+        setGeneratingId(created.id);
+        setStep(3);
+      }
     } catch (e: any) {
       toast({ title: t.studio.generationFailed, description: e.message, variant: "destructive" });
     }
   };
 
   const handleDownload = () => {
-    if (!resultCreative?.imageData) return;
+    if (!resultCreative) return;
+    const isVideo = resultCreative.mediaType === "video";
+    const src = isVideo ? resultCreative.videoUrl : resultCreative.imageData;
+    if (!src) return;
     const a = document.createElement('a');
-    a.href = resultCreative.imageData;
-    a.download = `${resultCreative.title.replace(/\s+/g, '-').toLowerCase()}-ad.png`;
+    a.href = src;
+    a.download = `${resultCreative.title.replace(/\s+/g, '-').toLowerCase()}-ad.${isVideo ? "mp4" : "png"}`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -107,7 +212,14 @@ export default function Studio() {
     setStep(1);
     setGeneratingId(null);
     setFormData({ goal: "awareness" });
+    setMediaMode("image");
+    setVideoFile(null);
+    if (videoPreviewUrl) URL.revokeObjectURL(videoPreviewUrl);
+    setVideoPreviewUrl(null);
   };
+
+  const isPending = generateCreative.isPending || uploadVideo.isPending;
+  const resultIsVideo = resultCreative?.mediaType === "video";
 
   return (
     <div className="max-w-5xl mx-auto space-y-8 pb-12">
@@ -161,10 +273,9 @@ export default function Studio() {
                   <span className="text-primary font-bold text-sm">1</span>
                 </div>
                 <h2 className="text-xl font-bold">{t.studio.selectBrand}</h2>
-                {!formData.brandId && (
+                {!formData.brandId ? (
                   <span className="ms-auto text-xs font-semibold text-muted-foreground bg-muted px-2.5 py-1 rounded-full">{t.studio.pickOne}</span>
-                )}
-                {formData.brandId && (
+                ) : (
                   <CheckCircle2 className="ms-auto w-5 h-5 text-green-500" />
                 )}
               </div>
@@ -220,10 +331,9 @@ export default function Studio() {
                   <span className="text-primary font-bold text-sm">2</span>
                 </div>
                 <h2 className="text-xl font-bold">{t.studio.selectFormat}</h2>
-                {!formData.formatSize && (
+                {!formData.formatSize ? (
                   <span className="ms-auto text-xs font-semibold text-muted-foreground bg-muted px-2.5 py-1 rounded-full">{t.studio.pickOne}</span>
-                )}
-                {formData.formatSize && (
+                ) : (
                   <CheckCircle2 className="ms-auto w-5 h-5 text-green-500" />
                 )}
               </div>
@@ -261,6 +371,95 @@ export default function Studio() {
               </div>
             </div>
 
+            {/* Media Type Selection */}
+            <div className="glass-card rounded-2xl p-6 space-y-5">
+              <div className="flex items-center gap-3 pb-2 border-b border-border/50">
+                <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
+                  <span className="text-primary font-bold text-sm">3</span>
+                </div>
+                <h2 className="text-xl font-bold">{t.studio.mediaType}</h2>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {/* Image */}
+                <button
+                  onClick={() => setMediaMode("image")}
+                  data-testid="media-type-image"
+                  className={`flex flex-col items-center gap-3 p-5 rounded-xl border-2 cursor-pointer transition-all ${
+                    mediaMode === "image"
+                      ? 'border-primary bg-primary/5 shadow-md shadow-primary/10'
+                      : 'border-border/50 hover:border-primary/40 hover:bg-muted/50 bg-card'
+                  }`}
+                >
+                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${mediaMode === "image" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
+                    <ImageIcon className="w-6 h-6" />
+                  </div>
+                  <div className="text-center">
+                    <p className="font-semibold text-sm">{t.studio.image}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{t.studio.generateAiVideoDesc.replace("video", "image")}</p>
+                  </div>
+                  {mediaMode === "image" && <CheckCircle2 className="w-4 h-4 text-primary" />}
+                </button>
+
+                {/* Upload Video */}
+                <button
+                  onClick={() => isPro ? setMediaMode("video-upload") : null}
+                  data-testid="media-type-video-upload"
+                  className={`flex flex-col items-center gap-3 p-5 rounded-xl border-2 cursor-pointer transition-all relative ${
+                    mediaMode === "video-upload"
+                      ? 'border-primary bg-primary/5 shadow-md shadow-primary/10'
+                      : isPro
+                        ? 'border-border/50 hover:border-primary/40 hover:bg-muted/50 bg-card'
+                        : 'border-border/40 bg-card/50 cursor-not-allowed opacity-70'
+                  }`}
+                >
+                  {!isPro && (
+                    <div className="absolute top-2 end-2">
+                      <span className="bg-purple-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-full uppercase">Pro</span>
+                    </div>
+                  )}
+                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${mediaMode === "video-upload" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
+                    <Upload className="w-6 h-6" />
+                  </div>
+                  <div className="text-center">
+                    <p className="font-semibold text-sm">{t.studio.uploadVideo}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{t.studio.uploadVideoDesc}</p>
+                  </div>
+                  {mediaMode === "video-upload" && <CheckCircle2 className="w-4 h-4 text-primary" />}
+                </button>
+
+                {/* AI Video */}
+                <button
+                  onClick={() => isPro ? setMediaMode("video-ai") : null}
+                  data-testid="media-type-video-ai"
+                  className={`flex flex-col items-center gap-3 p-5 rounded-xl border-2 cursor-pointer transition-all relative ${
+                    mediaMode === "video-ai"
+                      ? 'border-primary bg-primary/5 shadow-md shadow-primary/10'
+                      : isPro
+                        ? 'border-border/50 hover:border-primary/40 hover:bg-muted/50 bg-card'
+                        : 'border-border/40 bg-card/50 cursor-not-allowed opacity-70'
+                  }`}
+                >
+                  {!isPro && (
+                    <div className="absolute top-2 end-2">
+                      <span className="bg-purple-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-full uppercase">Pro</span>
+                    </div>
+                  )}
+                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${mediaMode === "video-ai" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
+                    <Film className="w-6 h-6" />
+                  </div>
+                  <div className="text-center">
+                    <p className="font-semibold text-sm">{t.studio.generateAiVideo}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{t.studio.generateAiVideoDesc}</p>
+                  </div>
+                  {mediaMode === "video-ai" && <CheckCircle2 className="w-4 h-4 text-primary" />}
+                </button>
+              </div>
+
+              {!isPro && (mediaMode === "image") && (
+                <UpgradeProBanner message={t.studio.proFeatureDesc} ctaLabel={t.studio.upgradeToPro} />
+              )}
+            </div>
+
             <div className="flex justify-end">
               <Button
                 size="lg"
@@ -283,6 +482,16 @@ export default function Studio() {
                   <ArrowLeft className="w-4 h-4" />
                 </Button>
                 <h2 className="text-xl font-bold">{t.studio.describeProduct}</h2>
+                {/* Badge for media type */}
+                <span className={`ms-auto text-xs font-bold px-2.5 py-1 rounded-full uppercase flex items-center gap-1.5 ${
+                  mediaMode === "image" ? "bg-blue-500/15 text-blue-500" :
+                  mediaMode === "video-upload" ? "bg-purple-500/15 text-purple-500" :
+                  "bg-indigo-500/15 text-indigo-500"
+                }`}>
+                  {mediaMode === "image" ? <><ImageIcon className="w-3 h-3" /> {t.studio.image}</> :
+                   mediaMode === "video-upload" ? <><Upload className="w-3 h-3" /> {t.studio.uploadVideo}</> :
+                   <><Film className="w-3 h-3" /> {t.studio.generateAiVideo}</>}
+                </span>
               </div>
 
               <div className="space-y-5 max-w-2xl">
@@ -308,7 +517,6 @@ export default function Studio() {
                       className="h-12 rounded-xl"
                     />
                   </div>
-
                   <div className="space-y-2">
                     <Label className="text-sm font-semibold">{t.studio.campaignGoal}</Label>
                     <Select value={formData.goal} onValueChange={v => setFormData({...formData, goal: v})}>
@@ -348,6 +556,57 @@ export default function Studio() {
                   />
                 </div>
 
+                {/* Video Upload Zone */}
+                {mediaMode === "video-upload" && (
+                  <div className="space-y-3">
+                    <Label className="text-sm font-semibold">{t.studio.videoFile} <span className="text-destructive">*</span></Label>
+                    {videoPreviewUrl ? (
+                      <div className="rounded-xl border border-border overflow-hidden relative">
+                        <video src={videoPreviewUrl} className="w-full max-h-64 object-cover" controls />
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          className="absolute top-2 end-2"
+                          onClick={() => { setVideoFile(null); setVideoPreviewUrl(null); }}
+                        >
+                          Change
+                        </Button>
+                      </div>
+                    ) : (
+                      <div
+                        className={`border-2 border-dashed rounded-xl p-10 flex flex-col items-center gap-3 cursor-pointer transition-colors ${
+                          isDragOver ? "border-primary bg-primary/5" : "border-border/60 hover:border-primary/50 hover:bg-muted/30"
+                        }`}
+                        onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+                        onDragLeave={() => setIsDragOver(false)}
+                        onDrop={handleDrop}
+                        onClick={() => fileInputRef.current?.click()}
+                        data-testid="video-drop-zone"
+                      >
+                        <div className="w-14 h-14 rounded-2xl bg-muted flex items-center justify-center">
+                          <Video className="w-7 h-7 text-muted-foreground" />
+                        </div>
+                        <div className="text-center">
+                          <p className="font-semibold text-sm text-foreground">{t.studio.dragDropVideo}</p>
+                          <p className="text-xs text-muted-foreground mt-1">{t.studio.videoFormats}</p>
+                        </div>
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept="video/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) handleVideoFileSelect(file);
+                          }}
+                          data-testid="input-video-file"
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div className="pt-2 border-t border-border/50 flex gap-3">
                   <Button variant="outline" onClick={() => setStep(1)} className="h-12 px-6 rounded-xl">
                     <ArrowLeft className="w-4 h-4 me-2" /> {t.studio.backBtn}
@@ -355,13 +614,17 @@ export default function Studio() {
                   <Button
                     size="lg"
                     onClick={handleNext}
-                    disabled={generateCreative.isPending}
+                    disabled={isPending}
                     data-testid="button-generate"
                     className="flex-1 h-12 rounded-xl shadow-lg shadow-primary/25 bg-gradient-to-r from-primary to-purple-500 hover:opacity-90"
                   >
-                    {generateCreative.isPending
+                    {isPending
                       ? <><Loader2 className="w-4 h-4 animate-spin me-2" /> {t.studio.starting}</>
-                      : <><Sparkles className="w-4 h-4 me-2" /> {t.studio.generateBtn}</>
+                      : mediaMode === "video-upload"
+                        ? <><Upload className="w-4 h-4 me-2" /> {t.studio.uploadVideoBtn}</>
+                        : mediaMode === "video-ai"
+                          ? <><Film className="w-4 h-4 me-2" /> {t.studio.generateVideoBtn}</>
+                          : <><Sparkles className="w-4 h-4 me-2" /> {t.studio.generateBtn}</>
                     }
                   </Button>
                 </div>
@@ -382,11 +645,18 @@ export default function Studio() {
                   <div className="absolute -inset-3 bg-primary/5 rounded-full blur-xl animate-pulse" />
                 </div>
                 <div>
-                  <h3 className="text-2xl font-bold mb-2">{t.studio.generatingTitle}</h3>
-                  <p className="text-muted-foreground">{t.studio.generatingSubtitle}</p>
+                  <h3 className="text-2xl font-bold mb-2">
+                    {mediaMode === "video-ai" ? t.studio.generatingVideoTitle : t.studio.generatingTitle}
+                  </h3>
+                  <p className="text-muted-foreground">
+                    {mediaMode === "video-ai" ? t.studio.generatingVideoSubtitle : t.studio.generatingSubtitle}
+                  </p>
                 </div>
                 <div className="w-full max-w-sm space-y-3">
-                  {[t.studio.writingCopy, t.studio.generatingImage, t.studio.finalizing].map((label, i) => (
+                  {(mediaMode === "video-ai"
+                    ? [t.studio.writingCopy, t.studio.generatingVideo, t.studio.finalizing]
+                    : [t.studio.writingCopy, t.studio.generatingImage, t.studio.finalizing]
+                  ).map((label, i) => (
                     <div key={label} className="flex items-center gap-3 text-sm text-muted-foreground">
                       <div className="w-5 h-5 rounded-full border-2 border-primary/30 flex items-center justify-center">
                         <Loader2 className="w-3 h-3 text-primary animate-spin" style={{ animationDelay: `${i * 0.3}s` }} />
@@ -410,26 +680,36 @@ export default function Studio() {
               </div>
             ) : (
               <div className="grid md:grid-cols-2 gap-6">
-                {/* Image Preview */}
+                {/* Media Preview */}
                 <div className="space-y-4">
                   <div className="glass-card rounded-2xl overflow-hidden">
                     <div className="bg-muted/50 aspect-square flex items-center justify-center relative group overflow-hidden">
-                      {resultCreative.imageData ? (
-                        <img src={resultCreative.imageData} alt="Generated Ad" className="w-full h-full object-cover" />
+                      {resultIsVideo && resultCreative.videoUrl ? (
+                        <video
+                          src={resultCreative.videoUrl}
+                          className="w-full h-full object-cover"
+                          controls
+                          playsInline
+                        />
+                      ) : resultCreative.imageData ? (
+                        <>
+                          <img src={resultCreative.imageData} alt="Generated Ad" className="w-full h-full object-cover" />
+                          <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                            <Button variant="secondary" className="rounded-full shadow-2xl" onClick={handleDownload} data-testid="button-download-hover">
+                              <Download className="w-4 h-4 me-2" /> {t.studio.downloadImage}
+                            </Button>
+                          </div>
+                        </>
                       ) : (
                         <span className="text-muted-foreground">Preview unavailable</span>
                       )}
-                      <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                        <Button variant="secondary" className="rounded-full shadow-2xl" onClick={handleDownload} data-testid="button-download-hover">
-                          <Download className="w-4 h-4 me-2" /> {t.studio.downloadImage}
-                        </Button>
-                      </div>
                     </div>
                   </div>
 
                   <div className="flex gap-3">
                     <Button className="flex-1 h-11 rounded-xl shadow-md" onClick={handleDownload} data-testid="button-download-image">
-                      <Download className="w-4 h-4 me-2" /> {t.studio.downloadImage}
+                      <Download className="w-4 h-4 me-2" />
+                      {resultIsVideo ? t.studio.downloadVideo : t.studio.downloadImage}
                     </Button>
                     <Button variant="outline" className="flex-1 h-11 rounded-xl" onClick={() => setLocation('/library')}>
                       <Library className="w-4 h-4 me-2" /> {t.studio.viewLibrary}
@@ -450,62 +730,73 @@ export default function Studio() {
                         <div className="flex items-center gap-2 mt-1.5">
                           <span className="px-2.5 py-1 text-xs font-bold bg-secondary rounded-lg capitalize">{resultCreative.platform}</span>
                           <span className="text-xs text-muted-foreground">{resultCreative.formatName} · {resultCreative.formatSize}</span>
+                          {resultIsVideo && (
+                            <span className="px-2 py-0.5 text-xs font-bold bg-purple-500/15 text-purple-500 rounded-md border border-purple-500/30 flex items-center gap-1">
+                              <Video className="w-3 h-3" /> Video
+                            </span>
+                          )}
                         </div>
                       </div>
-                      <div className="flex flex-col items-center shrink-0">
-                        <div className="relative w-14 h-14">
-                          <svg className="w-full h-full -rotate-90" viewBox="0 0 56 56">
-                            <circle cx="28" cy="28" r="24" fill="none" stroke="currentColor" strokeWidth="4" className="text-green-500/20" />
-                            <circle cx="28" cy="28" r="24" fill="none" stroke="currentColor" strokeWidth="4" className="text-green-500"
-                              strokeDasharray={`${2 * Math.PI * 24}`}
-                              strokeDashoffset={`${2 * Math.PI * 24 * (1 - (resultCreative.performanceScore || 80) / 100)}`}
-                              strokeLinecap="round"
-                            />
-                          </svg>
-                          <span className="absolute inset-0 flex items-center justify-center font-bold text-green-500 text-base">
-                            {resultCreative.performanceScore || 80}
+                      {!resultIsVideo && (
+                        <div className="flex flex-col items-center shrink-0">
+                          <div className="relative w-14 h-14">
+                            <svg className="w-full h-full -rotate-90" viewBox="0 0 56 56">
+                              <circle cx="28" cy="28" r="24" fill="none" stroke="currentColor" strokeWidth="4" className="text-green-500/20" />
+                              <circle cx="28" cy="28" r="24" fill="none" stroke="currentColor" strokeWidth="4" className="text-green-500"
+                                strokeDasharray={`${2 * Math.PI * 24}`}
+                                strokeDashoffset={`${2 * Math.PI * 24 * (1 - (resultCreative.performanceScore || 80) / 100)}`}
+                                strokeLinecap="round"
+                              />
+                            </svg>
+                            <span className="absolute inset-0 flex items-center justify-center font-bold text-green-500 text-base">
+                              {resultCreative.performanceScore || 80}
+                            </span>
+                          </div>
+                          <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider mt-1">{t.studio.score}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {resultCreative.adCopy && (
+                      <div className="space-y-3">
+                        <div className="bg-background/50 rounded-xl p-4 border border-border/50">
+                          <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1.5">{t.studio.headline}</p>
+                          <p className="font-bold text-base">{(resultCreative.adCopy as any)?.headline}</p>
+                        </div>
+                        <div className="bg-background/50 rounded-xl p-4 border border-border/50">
+                          <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1.5">{t.studio.bodyCopy}</p>
+                          <p className="text-sm leading-relaxed">{(resultCreative.adCopy as any)?.description}</p>
+                        </div>
+                        <div className="bg-background/50 rounded-xl p-4 border border-border/50">
+                          <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1.5">{t.studio.callToAction}</p>
+                          <span className="inline-block px-4 py-2 bg-primary text-primary-foreground font-bold rounded-lg text-sm">
+                            {(resultCreative.adCopy as any)?.cta}
                           </span>
                         </div>
-                        <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider mt-1">{t.studio.score}</span>
                       </div>
-                    </div>
-
-                    <div className="space-y-3">
-                      <div className="bg-background/50 rounded-xl p-4 border border-border/50">
-                        <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1.5">{t.studio.headline}</p>
-                        <p className="font-bold text-base">{(resultCreative.adCopy as any)?.headline}</p>
-                      </div>
-                      <div className="bg-background/50 rounded-xl p-4 border border-border/50">
-                        <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1.5">{t.studio.bodyCopy}</p>
-                        <p className="text-sm leading-relaxed">{(resultCreative.adCopy as any)?.description}</p>
-                      </div>
-                      <div className="bg-background/50 rounded-xl p-4 border border-border/50">
-                        <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mb-1.5">{t.studio.callToAction}</p>
-                        <span className="inline-block px-4 py-2 bg-primary text-primary-foreground font-bold rounded-lg text-sm">
-                          {(resultCreative.adCopy as any)?.cta}
-                        </span>
-                      </div>
-                    </div>
+                    )}
                   </div>
 
-                  <div className="glass-card rounded-2xl p-4">
-                    <p className="text-xs text-muted-foreground mb-3 font-semibold uppercase tracking-wider">{t.studio.performanceBreakdown}</p>
-                    {[
-                      { label: t.studio.headlineImpact, val: 88 },
-                      { label: t.studio.copyCl, val: 92 },
-                      { label: t.studio.ctaStrength, val: 85 },
-                    ].map(({ label, val }) => (
-                      <div key={label} className="mb-3">
-                        <div className="flex justify-between text-xs mb-1">
-                          <span className="text-muted-foreground">{label}</span>
-                          <span className="font-bold text-green-500">{val}%</span>
+                  {!resultIsVideo && (
+                    <div className="glass-card rounded-2xl p-4">
+                      <p className="text-xs text-muted-foreground mb-3 font-semibold uppercase tracking-wider">{t.studio.performanceBreakdown}</p>
+                      {[
+                        { label: t.studio.headlineImpact, val: 88 },
+                        { label: t.studio.copyCl, val: 92 },
+                        { label: t.studio.ctaStrength, val: 85 },
+                      ].map(({ label, val }) => (
+                        <div key={label} className="mb-3">
+                          <div className="flex justify-between text-xs mb-1">
+                            <span className="text-muted-foreground">{label}</span>
+                            <span className="font-bold text-green-500">{val}%</span>
+                          </div>
+                          <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                            <div className="h-full bg-gradient-to-r from-green-500 to-emerald-400 rounded-full" style={{ width: `${val}%` }} />
+                          </div>
                         </div>
-                        <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                          <div className="h-full bg-gradient-to-r from-green-500 to-emerald-400 rounded-full" style={{ width: `${val}%` }} />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             )}

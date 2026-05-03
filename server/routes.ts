@@ -2,10 +2,29 @@ import type { Express } from "express";
 import type { Server } from "http";
 import { GoogleGenAI, Modality } from "@google/genai";
 import bcrypt from "bcryptjs";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
 import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { AD_FORMATS } from "@shared/schema";
 import { z } from "zod";
+
+// Multer setup — store video uploads in /tmp/uploads
+const uploadDir = "/tmp/uploads";
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+const upload = multer({
+  dest: uploadDir,
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype.startsWith("video/")) {
+      cb(null, true);
+    } else {
+      cb(new Error("Only video files are allowed"));
+    }
+  },
+});
 
 const ai = new GoogleGenAI({
   apiKey: process.env.AI_INTEGRATIONS_GEMINI_API_KEY,
@@ -279,6 +298,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post(api.creatives.generate.path, async (req, res) => {
     try {
       const input = api.creatives.generate.input.parse(req.body);
+      const isVideoAI = (req.body as any).mediaType === "video";
       const brand = await storage.getBrand(input.brandId);
       if (!brand) return res.status(404).json({ message: "Brand not found" });
 
@@ -294,6 +314,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         goal: input.goal,
         adCopy: null,
         imageData: null,
+        videoUrl: null,
+        mediaType: isVideoAI ? "video" : "image",
         status: "generating",
         performanceScore: null,
         isFavorite: false,
@@ -315,36 +337,67 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             formatName: input.formatName,
           });
 
-          const imageData = await generateAdImage({
-            brandName: brand.name,
-            brandIndustry: brand.industry,
-            primaryColor: brand.primaryColor,
-            secondaryColor: brand.secondaryColor,
-            fontFamily: brand.fontFamily,
-            productName: input.productName,
-            productDescription: input.productDescription,
-            headline: adCopy.headline,
-            description: adCopy.description,
-            cta: adCopy.cta,
-            platform: input.platform,
-            formatName: input.formatName,
-            goal: input.goal,
-          });
-
-          const score = calculatePerformanceScore({
-            headline: adCopy.headline,
-            description: adCopy.description,
-            cta: adCopy.cta,
-            goal: input.goal,
-            platform: input.platform,
-          });
-
-          await storage.updateCreative(creative.id, {
-            adCopy: adCopy as any,
-            imageData,
-            status: "ready",
-            performanceScore: score,
-          });
+          if (isVideoAI) {
+            // AI video: generate a thumbnail image and store it as imageData
+            // (true video generation would require a dedicated video model)
+            const imageData = await generateAdImage({
+              brandName: brand.name,
+              brandIndustry: brand.industry,
+              primaryColor: brand.primaryColor,
+              secondaryColor: brand.secondaryColor,
+              fontFamily: brand.fontFamily,
+              productName: input.productName,
+              productDescription: input.productDescription,
+              headline: adCopy.headline,
+              description: adCopy.description,
+              cta: adCopy.cta,
+              platform: input.platform,
+              formatName: input.formatName,
+              goal: input.goal,
+            });
+            const score = calculatePerformanceScore({
+              headline: adCopy.headline,
+              description: adCopy.description,
+              cta: adCopy.cta,
+              goal: input.goal,
+              platform: input.platform,
+            });
+            await storage.updateCreative(creative.id, {
+              adCopy: adCopy as any,
+              imageData,
+              status: "ready",
+              performanceScore: score,
+            });
+          } else {
+            const imageData = await generateAdImage({
+              brandName: brand.name,
+              brandIndustry: brand.industry,
+              primaryColor: brand.primaryColor,
+              secondaryColor: brand.secondaryColor,
+              fontFamily: brand.fontFamily,
+              productName: input.productName,
+              productDescription: input.productDescription,
+              headline: adCopy.headline,
+              description: adCopy.description,
+              cta: adCopy.cta,
+              platform: input.platform,
+              formatName: input.formatName,
+              goal: input.goal,
+            });
+            const score = calculatePerformanceScore({
+              headline: adCopy.headline,
+              description: adCopy.description,
+              cta: adCopy.cta,
+              goal: input.goal,
+              platform: input.platform,
+            });
+            await storage.updateCreative(creative.id, {
+              adCopy: adCopy as any,
+              imageData,
+              status: "ready",
+              performanceScore: score,
+            });
+          }
         } catch (err) {
           console.error("Creative generation failed:", err);
           await storage.updateCreative(creative.id, { status: "failed" });
@@ -356,6 +409,58 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(400).json({ message: err.errors[0].message });
       }
       throw err;
+    }
+  });
+
+  // ===== VIDEO UPLOAD =====
+  app.post("/api/creatives/upload-video", upload.single("video"), async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ message: "No video file uploaded" });
+      }
+
+      const {
+        brandId, title, platform, formatSize, formatName,
+        productName, productDescription, goal, targetAudience,
+      } = req.body;
+
+      if (!brandId || !platform || !formatSize || !productName || !productDescription || !goal) {
+        return res.status(400).json({ message: "Missing required fields" });
+      }
+
+      // Read the file and convert to base64 data URL for storage
+      const fileBuffer = fs.readFileSync(req.file.path);
+      const mimeType = req.file.mimetype || "video/mp4";
+      const videoUrl = `data:${mimeType};base64,${fileBuffer.toString("base64")}`;
+
+      // Clean up temp file
+      fs.unlinkSync(req.file.path);
+
+      const adTitle = title || `${productName} – ${formatName || formatSize}`;
+
+      const creative = await storage.createCreative({
+        brandId: Number(brandId),
+        title: adTitle,
+        platform,
+        formatSize,
+        formatName: formatName || formatSize,
+        productName,
+        productDescription,
+        targetAudience: targetAudience || null,
+        goal,
+        adCopy: null,
+        imageData: null,
+        videoUrl,
+        mediaType: "video",
+        status: "ready",
+        performanceScore: null,
+        isFavorite: false,
+      });
+
+      res.status(201).json(creative);
+    } catch (err: any) {
+      console.error("Video upload failed:", err);
+      res.status(500).json({ message: err.message || "Video upload failed" });
     }
   });
 
