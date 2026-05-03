@@ -162,92 +162,127 @@ async function generateAdVideo(params: {
 }): Promise<string> {
   const id      = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
   const imgPath = path.join(os.tmpdir(), `ad_img_${id}.png`);
-  const outPath = path.join(VIDEO_DIR,   `${id}.mp4`);
+  const outPath = path.join(VIDEO_DIR, `${id}.mp4`);
 
-  console.log("[video] Generating cinematic ad:", params.headline);
+  console.log("[video] Generating 3-scene cinematic ad:", params.headline);
 
   const base64Raw = params.imageData.replace(/^data:image\/[\w+]+;base64,/, "");
   fs.writeFileSync(imgPath, Buffer.from(base64Raw, "base64"));
   console.log("[video] Image written:", fs.statSync(imgPath).size, "bytes");
 
-  const hex      = params.primaryColor.replace("#", "").padEnd(6, "0").slice(0, 6);
-  const brand    = ffText(params.brandName);
-  const headline = ffText(params.headline);
-  const cta      = ffText(params.cta);
+  const hex   = params.primaryColor.replace("#", "").padEnd(6, "0").slice(0, 6);
+  const brand = ffText(params.brandName);
+  const hl    = ffText(params.headline);
+  const cta   = ffText(params.cta);
 
-  // ── 15 s · 25 fps · 375 frames ──────────────────────────────────────────
-  // Scene 1  (0–4 s)  : Brand name reveal center-stage
-  // Scene 2  (4–12 s) : Product showcase — slow zoom + sinusoidal drift
-  // Scene 3  (12–15 s): CTA finale
-  // No `noise` filter → keeps H.264 temporal compression efficient (~2–5 MB)
+  // ─────────────────────────────────────────────────────────────────────────
+  // 3 SCENES · 15 seconds · 25 fps — 3 parallel FFmpeg processes, each gets
+  // a different colour grade, zoom/pan direction, and text overlay.
+  //
+  //  Scene 1  0–5 s  : BRAND REVEAL   — warm golden grade, zoom IN  (540p zoompan→1080p)
+  //  Scene 2  5–10 s : PRODUCT FOCUS  — near-B&W dramatic, pan L→R  (crop, fast)
+  //  Scene 3  10–15 s: CTA FINALE     — brand colour dominant, zoom OUT (540p zoompan→1080p)
+  //
+  // Running 3 separate processes in parallel avoids filter_complex contention.
+  // A final stream-copy concat joins them without re-encoding.
   // ─────────────────────────────────────────────────────────────────────────
 
-  const vf = [
-    // 1. Fill-crop to 1080×1080
-    "scale=1080:1080:force_original_aspect_ratio=increase,crop=1080:1080",
+  const s1Path   = path.join(os.tmpdir(), `s1_${id}.mp4`);
+  const s2Path   = path.join(os.tmpdir(), `s2_${id}.mp4`);
+  const s3Path   = path.join(os.tmpdir(), `s3_${id}.mp4`);
+  const listPath = path.join(os.tmpdir(), `concat_${id}.txt`);
 
-    // 2. Slow cinematic zoom 1.0→1.18 + sinusoidal x-drift ±12 px
-    `zoompan=z='min(1+0.00048*on,1.18)':d=375:x='iw/2-(iw/zoom/2)+12*sin(2*PI*on/375)':y='ih/2-(ih/zoom/2)':s=1080x1080:fps=25`,
+  const ENC = ["-r","25","-c:v","libx264","-pix_fmt","yuv420p","-preset","fast","-crf","26"];
 
-    // 3. Cinematic colour grade
-    "eq=contrast=1.10:saturation=1.20:brightness=-0.03:gamma=0.92",
+  // ── SCENE 1: BRAND REVEAL — warm golden grade, zoom IN ────────────────
+  // zoompan at 540p (4× faster than 1080p), scale back up after motion.
+  // crop x/y animate WITHOUT eval=frame — they are per-frame by default.
+  const scene1vf = [
+    `scale=540:540:force_original_aspect_ratio=increase,crop=540:540`,
+    `zoompan=z='min(1+0.00055*on,1.18)':d=125:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=540x540:fps=25`,
+    `scale=1080:1080`,
+    `eq=contrast=1.08:saturation=1.35:brightness=0.02:gamma=0.96`,
+    `vignette=PI/4.5`,
+    `drawbox=x=0:y=0:w=iw:h=ih:color=0xFF8C00@0.08:t=fill`,
+    `drawbox=x=0:y=ih*0.60:w=iw:h=ih*0.40:color=0x${hex}@0.78:t=fill`,
+    `drawbox=x=0:y=0:w=iw:h=ih*0.07:color=black@0.55:t=fill`,
+    `drawtext=fontfile=${FONT_BOLD}:text='${brand}':x=(w-tw)/2:y=(h-th)/2-26:fontsize=84:fontcolor=white:shadowcolor=black@0.85:shadowx=4:shadowy=4:alpha='if(lt(t,0.7),t/0.7,1)'`,
+    `drawtext=fontfile=${FONT_BOLD}:text='${hl}':x=(w-tw)/2:y=(h-th)/2+72:fontsize=33:fontcolor=white@0.90:shadowcolor=black@0.65:shadowx=2:shadowy=2:alpha='if(lt(t,1.3),0,if(lt(t,2.1),(t-1.3)/0.8,1))'`,
+    `fade=t=in:st=0:d=0.5,fade=t=out:st=4.5:d=0.5`,
+  ].join(",");
 
-    // 4. Vignette (dark edges, cinema feel)
-    "vignette=PI/4.5",
+  // ── SCENE 2: PRODUCT FOCUS — near-B&W dramatic grade, pan L→R ────────
+  // crop x/y support the `n` variable (frame count) natively — no eval=frame needed.
+  // Scale 1440→crop 1080 window pans from x=180 to x=300 over 124 frames.
+  const scene2vf = [
+    `scale=1440:1440:force_original_aspect_ratio=increase,crop=1440:1440`,
+    `crop=w=1080:h=1080:x='180+120*n/124':y='180'`,
+    `eq=contrast=1.38:saturation=0.16:brightness=-0.06:gamma=0.87`,
+    `vignette=PI/3.2`,
+    `drawbox=x=0:y=0:w=iw:h=ih:color=0x000820@0.14:t=fill`,
+    `drawbox=x=0:y=ih*0.60:w=iw:h=ih*0.40:color=0x${hex}@0.82:t=fill`,
+    `drawbox=x=0:y=0:w=iw:h=ih*0.07:color=black@0.55:t=fill`,
+    `drawtext=fontfile=${FONT_BOLD}:text='${hl}':x=(w-tw)/2:y='h*0.67+max(0,h*0.33+100)*(1-min(t/0.8,1))':fontsize=52:fontcolor=white:shadowcolor=black@0.90:shadowx=3:shadowy=3:alpha='if(lt(t,0.3),0,if(lt(t,1.1),(t-0.3)/0.8,1))'`,
+    `drawtext=fontfile=${FONT_BOLD}:text='  ${cta}  ':x=(w-tw)/2:y=h*0.82:fontsize=46:fontcolor=white:box=1:boxcolor=white@0.20:boxborderw=26:shadowcolor=black@0.55:shadowx=2:shadowy=2:alpha='if(lt(t,2.0),0,if(lt(t,3.0),(t-2.0)/1.0,1))'`,
+    `fade=t=in:st=0:d=0.5,fade=t=out:st=4.5:d=0.5`,
+  ].join(",");
 
-    // 5. Brand-colour gradient bar — bottom 42 %
-    `drawbox=x=0:y=ih*0.58:w=iw:h=ih*0.42:color=0x${hex}@0.72:t=fill`,
-
-    // 6. Subtle top dark bar for text contrast
-    `drawbox=x=0:y=0:w=iw:h=ih*0.06:color=black@0.50:t=fill`,
-
-    // ── SCENE 1 (0–4 s) ──────────────────────────────────────────────────
-    // Brand name big center  — fade in 0→0.7 s, hold, fade out 3.4→4 s
-    `drawtext=fontfile=${FONT_BOLD}:text='${brand}':x=(w-tw)/2:y=(h-th)/2-28:fontsize=80:fontcolor=white:shadowcolor=black@0.85:shadowx=4:shadowy=4:alpha='if(lt(t,0.7),t/0.7,if(lt(t,3.4),1,if(lt(t,4),(4-t)/0.6,0)))'`,
-    // Headline tease small — fade in 1.4→2.2 s, hold, fade out 3.4→4 s
-    `drawtext=fontfile=${FONT_BOLD}:text='${headline}':x=(w-tw)/2:y=(h-th)/2+68:fontsize=33:fontcolor=white@0.88:shadowcolor=black@0.65:shadowx=2:shadowy=2:alpha='if(lt(t,1.4),0,if(lt(t,2.2),(t-1.4)/0.8,if(lt(t,3.4),1,if(lt(t,4),(4-t)/0.6,0))))'`,
-
-    // ── SCENE 2 (4–12 s) ─────────────────────────────────────────────────
-    // Headline prominent — fade in 4→5 s, hold, fade out 11.5→12 s
-    `drawtext=fontfile=${FONT_BOLD}:text='${headline}':x=(w-tw)/2:y=h*0.67:fontsize=52:fontcolor=white:shadowcolor=black@0.90:shadowx=3:shadowy=3:alpha='if(lt(t,4),0,if(lt(t,5),(t-4)/1.0,if(lt(t,11.5),1,if(lt(t,12),(12-t)/0.5,0))))'`,
-    // CTA button — fade in 5.5→6.5 s, hold, fade out 11.5→12 s
-    `drawtext=fontfile=${FONT_BOLD}:text='  ${cta}  ':x=(w-tw)/2:y=h*0.82:fontsize=44:fontcolor=white:box=1:boxcolor=white@0.20:boxborderw=26:shadowcolor=black@0.55:shadowx=2:shadowy=2:alpha='if(lt(t,5.5),0,if(lt(t,6.5),(t-5.5)/1.0,if(lt(t,11.5),1,if(lt(t,12),(12-t)/0.5,0))))'`,
-
-    // ── SCENE 3 (12–15 s) ────────────────────────────────────────────────
-    // Brand name — fade in 12→12.8 s
-    `drawtext=fontfile=${FONT_BOLD}:text='${brand}':x=(w-tw)/2:y=h*0.65:fontsize=66:fontcolor=white:shadowcolor=black@0.85:shadowx=3:shadowy=3:alpha='if(lt(t,12),0,if(lt(t,12.8),(t-12)/0.8,1))'`,
-    // Large CTA button with brand colour — fade in 12.5→13.3 s
-    `drawtext=fontfile=${FONT_BOLD}:text='  ${cta}  ':x=(w-tw)/2:y=h*0.81:fontsize=52:fontcolor=white:box=1:boxcolor=0x${hex}:boxborderw=30:shadowcolor=black@0.5:shadowx=2:shadowy=2:alpha='if(lt(t,12.5),0,if(lt(t,13.3),(t-12.5)/0.8,1))'`,
-
-    // ── Fade in / out ─────────────────────────────────────────────────────
-    "fade=t=in:st=0:d=0.5",
-    "fade=t=out:st=14.5:d=0.5",
+  // ── SCENE 3: CTA FINALE — brand colour dominant, zoom OUT ─────────────
+  // zoompan at 540p zooms out (z decreases), revealing more of the image.
+  const scene3vf = [
+    `scale=540:540:force_original_aspect_ratio=increase,crop=540:540`,
+    `zoompan=z='max(1.18-0.00144*on,1.0)':d=125:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=540x540:fps=25`,
+    `scale=1080:1080`,
+    `eq=contrast=1.10:saturation=1.22:brightness=-0.02:gamma=0.93`,
+    `vignette=PI/4.5`,
+    `drawbox=x=0:y=0:w=iw:h=ih*0.52:color=black@0.50:t=fill`,
+    `drawbox=x=0:y=ih*0.48:w=iw:h=ih*0.52:color=0x${hex}@0.92:t=fill`,
+    `drawtext=fontfile=${FONT_BOLD}:text='${brand}':x=(w-tw)/2:y=h*0.12:fontsize=68:fontcolor=white:shadowcolor=black@0.85:shadowx=3:shadowy=3:alpha='if(lt(t,0.4),0,if(lt(t,1.1),(t-0.4)/0.7,1))'`,
+    `drawtext=fontfile=${FONT_BOLD}:text='${hl}':x=(w-tw)/2:y=h*0.26:fontsize=36:fontcolor=white@0.88:shadowcolor=black@0.70:shadowx=2:shadowy=2:alpha='if(lt(t,1.0),0,if(lt(t,1.7),(t-1.0)/0.7,1))'`,
+    `drawtext=fontfile=${FONT_BOLD}:text='  ${cta}  ':x=(w-tw)/2:y=h*0.60:fontsize=56:fontcolor=white:box=1:boxcolor=white@0.22:boxborderw=32:shadowcolor=black@0.5:shadowx=2:shadowy=2:alpha='if(lt(t,1.6),0,if(lt(t,2.4),(t-1.6)/0.8,1))'`,
+    `fade=t=in:st=0:d=0.5,fade=t=out:st=4.5:d=0.5`,
   ].join(",");
 
   try {
-    console.log("[video] Running FFmpeg (15 s, no noise, CRF 26)...");
+    console.log("[video] Generating 3 scenes in parallel...");
+
+    // Run all 3 scene renders simultaneously
+    await Promise.all([
+      execFileAsync(FFMPEG_BIN, [
+        "-y", "-loop", "1", "-t", "5", "-i", imgPath,
+        "-vf", scene1vf, ...ENC, s1Path,
+      ], { timeout: 240_000, maxBuffer: 50 * 1024 * 1024 }),
+
+      execFileAsync(FFMPEG_BIN, [
+        "-y", "-loop", "1", "-t", "5", "-i", imgPath,
+        "-vf", scene2vf, ...ENC, s2Path,
+      ], { timeout: 60_000, maxBuffer: 50 * 1024 * 1024 }),
+
+      execFileAsync(FFMPEG_BIN, [
+        "-y", "-loop", "1", "-t", "5", "-i", imgPath,
+        "-vf", scene3vf, ...ENC, s3Path,
+      ], { timeout: 240_000, maxBuffer: 50 * 1024 * 1024 }),
+    ]);
+
+    // Stream-copy concat — no re-encoding, nearly instant
+    fs.writeFileSync(listPath, `file '${s1Path}'\nfile '${s2Path}'\nfile '${s3Path}'\n`);
     await execFileAsync(FFMPEG_BIN, [
-      "-y", "-loop", "1", "-i", imgPath,
-      "-vf", vf,
-      "-t", "15", "-r", "25",
-      "-c:v", "libx264", "-pix_fmt", "yuv420p",
-      "-preset", "fast", "-crf", "26",
-      "-movflags", "+faststart",
-      outPath,
-    ], { timeout: 240_000, maxBuffer: 50 * 1024 * 1024 });
+      "-y", "-f", "concat", "-safe", "0", "-i", listPath,
+      "-c", "copy", "-movflags", "+faststart", outPath,
+    ], { timeout: 30_000, maxBuffer: 10 * 1024 * 1024 });
 
-    if (!fs.existsSync(outPath)) throw new Error("FFmpeg finished but output missing");
+    if (!fs.existsSync(outPath)) throw new Error("FFmpeg concat finished but output missing");
     const size = fs.statSync(outPath).size;
-    console.log(`[video] Done! ${id}.mp4 — ${(size/1024).toFixed(0)} KB`);
-
-    // Return a streamable URL instead of a huge base64 data URI
+    console.log(`[video] Done! ${id}.mp4 — ${(size / 1024).toFixed(0)} KB`);
     return `/api/video/${id}.mp4`;
   } catch (err: any) {
-    console.error("[video] FFmpeg error:", err?.message);
-    console.error("[video] stderr:", err?.stderr?.slice?.(0, 1000) ?? "none");
+    console.error("[video] FFmpeg error:", err?.message?.slice?.(0, 400));
+    console.error("[video] stderr:", err?.stderr?.slice?.(0, 1200) ?? "none");
     throw err;
   } finally {
-    try { fs.unlinkSync(imgPath); } catch {}
+    for (const f of [imgPath, s1Path, s2Path, s3Path, listPath]) {
+      try { fs.unlinkSync(f); } catch {}
+    }
   }
 }
 
