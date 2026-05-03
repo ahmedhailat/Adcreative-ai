@@ -218,17 +218,27 @@ export default function Studio() {
     }
   };
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     if (!resultCreative) return;
     const isVideo = resultCreative.mediaType === "video";
     const src = isVideo ? resultCreative.videoUrl : resultCreative.imageData;
     if (!src) return;
-    const a = document.createElement("a");
-    a.href = src;
-    a.download = `${resultCreative.title.replace(/\s+/g, "-").toLowerCase()}.${isVideo ? "mp4" : "png"}`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    const filename = `${resultCreative.title.replace(/\s+/g, "-").toLowerCase()}.${isVideo ? "mp4" : "png"}`;
+    // For video URLs (/api/video/xxx.mp4) fetch as blob so download works cross-origin
+    if (isVideo && src.startsWith("/")) {
+      const blob = await fetch(src).then(r => r.blob());
+      const url  = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } else {
+      const a = document.createElement("a");
+      a.href = src; a.download = filename;
+      document.body.appendChild(a); a.click();
+      document.body.removeChild(a);
+    }
   };
 
   const handleCreateAnother = () => {
@@ -756,7 +766,7 @@ export default function Studio() {
                         />
                         <div className="absolute top-2 start-2">
                           <span className="bg-black/70 text-white text-[10px] font-bold px-2 py-1 rounded-lg flex items-center gap-1 backdrop-blur-sm">
-                            <Play className="w-2.5 h-2.5 fill-white" /> MP4 · 9s · 1080×1080
+                            <Play className="w-2.5 h-2.5 fill-white" /> MP4 · 15s · 1080×1080
                           </span>
                         </div>
                       </div>

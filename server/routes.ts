@@ -19,9 +19,15 @@ const execFileAsync = promisify(execFile);
 const FFMPEG_BIN  = "/nix/store/inqkj79vydizl6ja0d8af99qlxbmyr84-replit-runtime-path/bin/ffmpeg";
 const FONT_BOLD   = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
 
+// Persistent video storage — served via /api/video/:filename
+const VIDEO_DIR  = "/tmp/ad_videos";
+const UPLOAD_DIR = "/tmp/uploads";
+for (const d of [VIDEO_DIR, UPLOAD_DIR]) {
+  if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+}
+
 // Multer setup — store video uploads in /tmp/uploads
-const uploadDir = "/tmp/uploads";
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+const uploadDir = UPLOAD_DIR;
 
 const upload = multer({
   dest: uploadDir,
@@ -152,72 +158,96 @@ async function generateAdVideo(params: {
   headline: string;
   cta: string;
   primaryColor: string;
+  brandName: string;
 }): Promise<string> {
-  const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  const tmpDir = os.tmpdir();
-  const inputPath  = path.join(tmpDir, `ad_img_${id}.png`);
-  const outputPath = path.join(tmpDir, `ad_vid_${id}.mp4`);
+  const id      = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const imgPath = path.join(os.tmpdir(), `ad_img_${id}.png`);
+  const outPath = path.join(VIDEO_DIR,   `${id}.mp4`);
 
-  console.log("[video] Starting video generation for", params.headline);
+  console.log("[video] Generating cinematic ad:", params.headline);
 
-  // Write image to disk
   const base64Raw = params.imageData.replace(/^data:image\/[\w+]+;base64,/, "");
-  fs.writeFileSync(inputPath, Buffer.from(base64Raw, "base64"));
-  console.log("[video] Image written:", fs.statSync(inputPath).size, "bytes");
+  fs.writeFileSync(imgPath, Buffer.from(base64Raw, "base64"));
+  console.log("[video] Image written:", fs.statSync(imgPath).size, "bytes");
 
-  const hex = params.primaryColor.replace("#", "").padEnd(6, "0").slice(0, 6);
-  const overlayColor = `0x${hex}DD`;
+  const hex      = params.primaryColor.replace("#", "").padEnd(6, "0").slice(0, 6);
+  const brand    = ffText(params.brandName);
   const headline = ffText(params.headline);
   const cta      = ffText(params.cta);
 
-  // Build filter_complex as a single string — using execFile so NO shell quoting needed
-  // Single quotes inside are fine since execFile bypasses the shell entirely
+  // ── 15 s · 25 fps · 375 frames ──────────────────────────────────────────
+  // Scene 1  (0–4 s)  : Brand name reveal center-stage
+  // Scene 2  (4–12 s) : Product showcase — slow zoom + sinusoidal drift
+  // Scene 3  (12–15 s): CTA finale
+  // No `noise` filter → keeps H.264 temporal compression efficient (~2–5 MB)
+  // ─────────────────────────────────────────────────────────────────────────
+
   const vf = [
-    "scale=1080:1080:force_original_aspect_ratio=decrease",
-    "pad=1080:1080:(ow-iw)/2:(oh-ih)/2:color=black",
-    "zoompan=z='min(zoom+0.0008,1.25)':d=225:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1080:fps=25",
-    `drawtext=fontfile=${FONT_BOLD}:text='${headline}':x=(w-tw)/2:y=h*0.72:fontsize=46:fontcolor=white:shadowcolor=black@0.8:shadowx=2:shadowy=2:alpha='if(lt(t,0.8),0,if(lt(t,1.8),(t-0.8)/1.0,1))'`,
-    `drawtext=fontfile=${FONT_BOLD}:text='  ${cta}  ':x=(w-tw)/2:y=h*0.86:fontsize=34:fontcolor=white:box=1:boxcolor=${overlayColor}:boxborderw=18:alpha='if(lt(t,1.8),0,if(lt(t,2.8),(t-1.8)/1.0,1))'`,
-    "fade=t=in:st=0:d=0.8",
-    "fade=t=out:st=8.2:d=0.8",
+    // 1. Fill-crop to 1080×1080
+    "scale=1080:1080:force_original_aspect_ratio=increase,crop=1080:1080",
+
+    // 2. Slow cinematic zoom 1.0→1.18 + sinusoidal x-drift ±12 px
+    `zoompan=z='min(1+0.00048*on,1.18)':d=375:x='iw/2-(iw/zoom/2)+12*sin(2*PI*on/375)':y='ih/2-(ih/zoom/2)':s=1080x1080:fps=25`,
+
+    // 3. Cinematic colour grade
+    "eq=contrast=1.10:saturation=1.20:brightness=-0.03:gamma=0.92",
+
+    // 4. Vignette (dark edges, cinema feel)
+    "vignette=PI/4.5",
+
+    // 5. Brand-colour gradient bar — bottom 42 %
+    `drawbox=x=0:y=ih*0.58:w=iw:h=ih*0.42:color=0x${hex}@0.72:t=fill`,
+
+    // 6. Subtle top dark bar for text contrast
+    `drawbox=x=0:y=0:w=iw:h=ih*0.06:color=black@0.50:t=fill`,
+
+    // ── SCENE 1 (0–4 s) ──────────────────────────────────────────────────
+    // Brand name big center  — fade in 0→0.7 s, hold, fade out 3.4→4 s
+    `drawtext=fontfile=${FONT_BOLD}:text='${brand}':x=(w-tw)/2:y=(h-th)/2-28:fontsize=80:fontcolor=white:shadowcolor=black@0.85:shadowx=4:shadowy=4:alpha='if(lt(t,0.7),t/0.7,if(lt(t,3.4),1,if(lt(t,4),(4-t)/0.6,0)))'`,
+    // Headline tease small — fade in 1.4→2.2 s, hold, fade out 3.4→4 s
+    `drawtext=fontfile=${FONT_BOLD}:text='${headline}':x=(w-tw)/2:y=(h-th)/2+68:fontsize=33:fontcolor=white@0.88:shadowcolor=black@0.65:shadowx=2:shadowy=2:alpha='if(lt(t,1.4),0,if(lt(t,2.2),(t-1.4)/0.8,if(lt(t,3.4),1,if(lt(t,4),(4-t)/0.6,0))))'`,
+
+    // ── SCENE 2 (4–12 s) ─────────────────────────────────────────────────
+    // Headline prominent — fade in 4→5 s, hold, fade out 11.5→12 s
+    `drawtext=fontfile=${FONT_BOLD}:text='${headline}':x=(w-tw)/2:y=h*0.67:fontsize=52:fontcolor=white:shadowcolor=black@0.90:shadowx=3:shadowy=3:alpha='if(lt(t,4),0,if(lt(t,5),(t-4)/1.0,if(lt(t,11.5),1,if(lt(t,12),(12-t)/0.5,0))))'`,
+    // CTA button — fade in 5.5→6.5 s, hold, fade out 11.5→12 s
+    `drawtext=fontfile=${FONT_BOLD}:text='  ${cta}  ':x=(w-tw)/2:y=h*0.82:fontsize=44:fontcolor=white:box=1:boxcolor=white@0.20:boxborderw=26:shadowcolor=black@0.55:shadowx=2:shadowy=2:alpha='if(lt(t,5.5),0,if(lt(t,6.5),(t-5.5)/1.0,if(lt(t,11.5),1,if(lt(t,12),(12-t)/0.5,0))))'`,
+
+    // ── SCENE 3 (12–15 s) ────────────────────────────────────────────────
+    // Brand name — fade in 12→12.8 s
+    `drawtext=fontfile=${FONT_BOLD}:text='${brand}':x=(w-tw)/2:y=h*0.65:fontsize=66:fontcolor=white:shadowcolor=black@0.85:shadowx=3:shadowy=3:alpha='if(lt(t,12),0,if(lt(t,12.8),(t-12)/0.8,1))'`,
+    // Large CTA button with brand colour — fade in 12.5→13.3 s
+    `drawtext=fontfile=${FONT_BOLD}:text='  ${cta}  ':x=(w-tw)/2:y=h*0.81:fontsize=52:fontcolor=white:box=1:boxcolor=0x${hex}:boxborderw=30:shadowcolor=black@0.5:shadowx=2:shadowy=2:alpha='if(lt(t,12.5),0,if(lt(t,13.3),(t-12.5)/0.8,1))'`,
+
+    // ── Fade in / out ─────────────────────────────────────────────────────
+    "fade=t=in:st=0:d=0.5",
+    "fade=t=out:st=14.5:d=0.5",
   ].join(",");
 
-  // execFile bypasses the shell — args are passed directly to ffmpeg
-  const args = [
-    "-y",
-    "-loop", "1",
-    "-i", inputPath,
-    "-vf", vf,
-    "-t", "9",
-    "-r", "25",
-    "-c:v", "libx264",
-    "-pix_fmt", "yuv420p",
-    "-preset", "fast",
-    "-crf", "22",
-    "-movflags", "+faststart",
-    outputPath,
-  ];
-
   try {
-    console.log("[video] Running FFmpeg with", args.length, "args...");
-    await execFileAsync(FFMPEG_BIN, args, {
-      timeout: 180_000,
-      maxBuffer: 50 * 1024 * 1024,
-    });
+    console.log("[video] Running FFmpeg (15 s, no noise, CRF 26)...");
+    await execFileAsync(FFMPEG_BIN, [
+      "-y", "-loop", "1", "-i", imgPath,
+      "-vf", vf,
+      "-t", "15", "-r", "25",
+      "-c:v", "libx264", "-pix_fmt", "yuv420p",
+      "-preset", "fast", "-crf", "26",
+      "-movflags", "+faststart",
+      outPath,
+    ], { timeout: 240_000, maxBuffer: 50 * 1024 * 1024 });
 
-    if (!fs.existsSync(outputPath)) {
-      throw new Error("FFmpeg finished but output file not found");
-    }
-    const buf = fs.readFileSync(outputPath);
-    console.log("[video] Done! Video size:", buf.length, "bytes");
-    return `data:video/mp4;base64,${buf.toString("base64")}`;
+    if (!fs.existsSync(outPath)) throw new Error("FFmpeg finished but output missing");
+    const size = fs.statSync(outPath).size;
+    console.log(`[video] Done! ${id}.mp4 — ${(size/1024).toFixed(0)} KB`);
+
+    // Return a streamable URL instead of a huge base64 data URI
+    return `/api/video/${id}.mp4`;
   } catch (err: any) {
-    console.error("[video] FFmpeg failed:", err?.message);
-    console.error("[video] stderr:", err?.stderr?.slice?.(0, 800) ?? "none");
+    console.error("[video] FFmpeg error:", err?.message);
+    console.error("[video] stderr:", err?.stderr?.slice?.(0, 1000) ?? "none");
     throw err;
   } finally {
-    try { fs.unlinkSync(inputPath); } catch {}
-    try { if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch {}
+    try { fs.unlinkSync(imgPath); } catch {}
   }
 }
 
@@ -249,6 +279,39 @@ const loginSchema = z.object({
 });
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+
+  // ===== VIDEO FILE STREAMING (with Range request support for scrubbing) =====
+  app.get("/api/video/:filename", (req, res) => {
+    const { filename } = req.params;
+    // Sanitize — only allow safe filenames
+    if (!/^[\w\-]+\.mp4$/.test(filename)) return res.status(400).end();
+    const filePath = path.join(VIDEO_DIR, filename);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ message: "Video not found or expired" });
+
+    const total = fs.statSync(filePath).size;
+    const range = req.headers.range;
+
+    if (range) {
+      const [s, e] = range.replace(/bytes=/, "").split("-");
+      const start = parseInt(s, 10);
+      const end   = e ? parseInt(e, 10) : total - 1;
+      res.writeHead(206, {
+        "Content-Range":  `bytes ${start}-${end}/${total}`,
+        "Accept-Ranges":  "bytes",
+        "Content-Length": end - start + 1,
+        "Content-Type":   "video/mp4",
+      });
+      fs.createReadStream(filePath, { start, end }).pipe(res);
+    } else {
+      res.writeHead(200, {
+        "Content-Length": total,
+        "Content-Type":   "video/mp4",
+        "Accept-Ranges":  "bytes",
+        "Cache-Control":  "public, max-age=7200",
+      });
+      fs.createReadStream(filePath).pipe(res);
+    }
+  });
 
   // ===== AUTH ROUTES =====
 
@@ -455,6 +518,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
               headline: adCopy.headline,
               cta: adCopy.cta,
               primaryColor: brand.primaryColor,
+              brandName: brand.name,
             });
             const score = calculatePerformanceScore({
               headline: adCopy.headline,
@@ -566,50 +630,47 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
-  // ===== VIDEO TEST ENDPOINT =====
+  // ===== VIDEO TEST ENDPOINT (cinematic 3-scene pipeline) =====
   app.get("/api/test-video", async (_req, res) => {
     try {
-      const id = `${Date.now()}`;
-      const tmpDir = os.tmpdir();
-      const inputPath  = path.join(tmpDir, `tv_in_${id}.png`);
-      const outputPath = path.join(tmpDir, `tv_out_${id}.mp4`);
+      const id      = `${Date.now()}`;
+      const imgPath = path.join(os.tmpdir(), `tv_in_${id}.png`);
 
-      // Create a gradient test image using ffmpeg's built-in sources
+      // Step 1 — generate a vivid test image with ffmpeg lavfi
       await execFileAsync(FFMPEG_BIN, [
         "-y", "-f", "lavfi",
-        "-i", "color=6366f1:size=1080x1080:duration=1",
-        "-vframes", "1", inputPath,
+        "-i", "color=c=0x6366f1:size=1080x1080:duration=1",
+        "-vf", [
+          "geq=r='80+60*sin(2*PI*X/540)':g='60+40*cos(2*PI*Y/540)':b='200+55*sin(2*PI*(X+Y)/1080)'",
+          `drawtext=fontfile=${FONT_BOLD}:text='Sample Product':x=(w-tw)/2:y=(h-th)/2:fontsize=60:fontcolor=white:shadowcolor=black@0.7:shadowx=3:shadowy=3`,
+        ].join(","),
+        "-vframes", "1", imgPath,
       ], { timeout: 15000, maxBuffer: 10 * 1024 * 1024 });
 
-      const vf = [
-        "scale=1080:1080:force_original_aspect_ratio=decrease",
-        "pad=1080:1080:(ow-iw)/2:(oh-ih)/2:color=black",
-        "zoompan=z='min(zoom+0.0008,1.25)':d=225:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1080:fps=25",
-        `drawtext=fontfile=${FONT_BOLD}:text='Ad Creative Test':x=(w-tw)/2:y=h*0.72:fontsize=54:fontcolor=white:shadowcolor=black@0.8:shadowx=2:shadowy=2:alpha='if(lt(t,0.8),0,if(lt(t,1.8),(t-0.8)/1.0,1))'`,
-        `drawtext=fontfile=${FONT_BOLD}:text='  Buy Now  ':x=(w-tw)/2:y=h*0.86:fontsize=38:fontcolor=white:box=1:boxcolor=0x6366f1DD:boxborderw=20:alpha='if(lt(t,1.8),0,if(lt(t,2.8),(t-1.8)/1.0,1))'`,
-        "fade=t=in:st=0:d=0.8",
-        "fade=t=out:st=8.2:d=0.8",
-      ].join(",");
+      // Step 2 — run full cinematic pipeline (returns /api/video/:id.mp4)
+      const imageData = `data:image/png;base64,${fs.readFileSync(imgPath).toString("base64")}`;
+      const videoUrl  = await generateAdVideo({
+        imageData,
+        headline:     "Drive Your Dream",
+        cta:          "Shop Now",
+        primaryColor: "#6366f1",
+        brandName:    "AdCreative AI",
+      });
+      try { fs.unlinkSync(imgPath); } catch {}
 
-      await execFileAsync(FFMPEG_BIN, [
-        "-y", "-loop", "1", "-i", inputPath,
-        "-vf", vf,
-        "-t", "9", "-r", "25",
-        "-c:v", "libx264", "-pix_fmt", "yuv420p",
-        "-preset", "fast", "-crf", "22", "-movflags", "+faststart",
-        outputPath,
-      ], { timeout: 120000, maxBuffer: 50 * 1024 * 1024 });
-
-      const buf = fs.readFileSync(outputPath);
-      try { fs.unlinkSync(inputPath); } catch {}
-      try { fs.unlinkSync(outputPath); } catch {}
-
-      res.setHeader("Content-Type", "video/mp4");
-      res.setHeader("Content-Disposition", 'inline; filename="test.mp4"');
-      res.send(buf);
+      // Stream the file directly from VIDEO_DIR
+      const filename = path.basename(videoUrl); // "xxx.mp4"
+      const filePath = path.join(VIDEO_DIR, filename);
+      const total    = fs.statSync(filePath).size;
+      res.writeHead(200, {
+        "Content-Type":   "video/mp4",
+        "Content-Length": total,
+        "Accept-Ranges":  "bytes",
+      });
+      fs.createReadStream(filePath).pipe(res);
     } catch (err: any) {
       console.error("[test-video] error:", err?.message);
-      res.status(500).json({ error: err?.message, stderr: err?.stderr?.slice?.(0, 500) });
+      res.status(500).json({ error: err?.message, stderr: err?.stderr?.slice?.(0, 800) });
     }
   });
 
