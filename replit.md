@@ -92,15 +92,26 @@ shared/
 4. Creative is immediately marked `status="ready"`
 5. Library shows video player card with play/pause controls
 
-## Pricing Page
+## Pricing Page & Stripe Integration
 
-- `/pricing` route — 3 plan cards: Free / Pro ($29/mo or $24/mo annual) / Business ($79/mo or $65/mo annual)
+- `/pricing` route — 3 plan cards: Free / Pro ($29/mo or $23/mo annual) / Business ($79/mo or $63/mo annual)
 - Monthly/yearly toggle, savings badges, feature lists with checkmarks
-- Plan detection: reads `user.plan` field from DB
-- Current plan highlighted; CTA changes to "Current Plan" if matched
-- FAQ accordion section
-- **Stripe NOT connected** — upgrade buttons are UI-only placeholders
-- `server/stripeClient.ts` and `server/webhookHandlers.ts` exist but are NOT imported/wired to server
+- Plan detection: reads `user.plan` field from DB; current plan highlighted
+- **Stripe fully wired**: clicking Upgrade → POST `/api/stripe/create-checkout-session` → redirect to Stripe Checkout
+- After payment, Stripe redirects back to `/pricing?success=true&plan=pro` — toast shown, user plan refreshed
+- Paid users see "Manage Billing" button → POST `/api/stripe/create-portal-session` → Stripe Customer Portal
+- Webhook handler at POST `/api/stripe/webhook` handles: `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_failed`
+- Price lookup: first tries Stripe price lookup keys (`pro_monthly`, `pro_yearly`, etc.), falls back to auto-creating prices
+
+## Stripe Configuration
+
+- `STRIPE_SECRET_KEY` — server-side secret (stored in Replit Secrets)
+- `STRIPE_PUBLISHABLE_KEY` — frontend publishable key (stored in Replit Secrets)  
+- `STRIPE_WEBHOOK_SECRET` — webhook signing secret (stored in Replit Secrets)
+- `server/stripeClient.ts` — initializes Stripe SDK from env var
+- `server/webhookHandlers.ts` — webhook event handler updates `users.plan` in DB
+- Webhook URL to register in Stripe dashboard: `https://<your-domain>/api/stripe/webhook`
+- Optional: set price lookup keys in Stripe dashboard as `pro_monthly`, `pro_yearly`, `business_monthly`, `business_yearly`
 
 ## Important CSS Notes
 

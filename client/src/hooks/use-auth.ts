@@ -7,7 +7,7 @@ export function useAuth() {
   const queryClient = useQueryClient();
   const [, setLocation] = useLocation();
 
-  const { data: user, isLoading } = useQuery<User | null>({
+  const { data: user, isLoading, refetch } = useQuery<User | null>({
     queryKey: ["/api/auth/me"],
     retry: false,
     staleTime: 1000 * 60 * 5,
@@ -28,5 +28,6 @@ export function useAuth() {
     isAuthenticated: !!user,
     logout: () => logoutMutation.mutate(),
     isLoggingOut: logoutMutation.isPending,
+    refetch,
   };
 }

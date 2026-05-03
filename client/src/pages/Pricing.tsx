@@ -1,13 +1,14 @@
 import { useState } from "react";
-import { Link } from "wouter";
-import { Check, Zap, Building2, Sparkles, ChevronDown, ChevronUp, Crown } from "lucide-react";
+import { Check, Zap, Building2, Sparkles, ChevronDown, ChevronUp, Crown, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useLang } from "@/contexts/LangContext";
 import { useAuth } from "@/hooks/use-auth";
+import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
 function PlanCard({
+  planKey,
   name,
   description,
   price,
@@ -20,8 +21,10 @@ function PlanCard({
   ctaVariant,
   icon: Icon,
   highlight,
-  comingSoon,
+  onUpgrade,
+  isLoading,
 }: {
+  planKey: string;
   name: string;
   description: string;
   price: string;
@@ -34,9 +37,10 @@ function PlanCard({
   ctaVariant: "outline" | "default" | "secondary";
   icon: React.ElementType;
   highlight?: boolean;
-  comingSoon?: string;
+  onUpgrade?: () => void;
+  isLoading?: boolean;
 }) {
-  const { t, isRTL } = useLang();
+  const { t } = useLang();
 
   return (
     <div
@@ -92,27 +96,30 @@ function PlanCard({
         ))}
       </ul>
 
-      <div className="mt-auto space-y-2">
+      <div className="mt-auto">
         {isCurrent ? (
-          <Button variant="outline" className="w-full" disabled data-testid={`btn-current-${name}`}>
+          <Button variant="outline" className="w-full" disabled data-testid={`btn-current-${planKey}`}>
             <Check className="w-4 h-4 me-2" />
             {t.pricing.currentPlan}
+          </Button>
+        ) : planKey === "free" ? (
+          <Button variant="outline" className="w-full" disabled data-testid="btn-free-plan">
+            {ctaLabel}
           </Button>
         ) : (
           <Button
             variant={ctaVariant}
-            className={cn(
-              "w-full",
-              highlight && "shadow-md shadow-primary/20",
-            )}
-            data-testid={`btn-upgrade-${name}`}
-            asChild
+            disabled={isLoading}
+            className={cn("w-full", highlight && "shadow-md shadow-primary/20")}
+            onClick={onUpgrade}
+            data-testid={`btn-upgrade-${planKey}`}
           >
-            <Link href="/pricing">{ctaLabel}</Link>
+            {isLoading ? (
+              <><Loader2 className="w-4 h-4 me-2 animate-spin" /> Redirecting…</>
+            ) : (
+              ctaLabel
+            )}
           </Button>
-        )}
-        {comingSoon && (
-          <p className="text-[11px] text-center text-muted-foreground">{comingSoon}</p>
         )}
       </div>
     </div>
@@ -144,10 +151,67 @@ function FaqItem({ q, a }: { q: string; a: string }) {
 
 export default function Pricing() {
   const { t } = useLang();
-  const { user } = useAuth();
+  const { user, refetch } = useAuth();
+  const { toast } = useToast();
   const [isYearly, setIsYearly] = useState(false);
+  const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
+  const [portalLoading, setPortalLoading] = useState(false);
 
   const userPlan = (user as any)?.plan ?? "free";
+
+  // Handle Stripe redirect back
+  useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("success") === "true") {
+      const plan = params.get("plan");
+      toast({ title: "🎉 Upgrade successful!", description: `You are now on the ${plan} plan.` });
+      refetch?.();
+      window.history.replaceState({}, "", "/pricing");
+    } else if (params.get("canceled") === "true") {
+      toast({ title: "Checkout canceled", description: "You were not charged.", variant: "destructive" });
+      window.history.replaceState({}, "", "/pricing");
+    }
+  });
+
+  const handleManageBilling = async () => {
+    setPortalLoading(true);
+    try {
+      const res = await fetch("/api/stripe/create-portal-session", {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message);
+      }
+      const { url } = await res.json();
+      window.location.href = url;
+    } catch (err: any) {
+      toast({ title: "Failed to open billing portal", description: err.message, variant: "destructive" });
+      setPortalLoading(false);
+    }
+  };
+
+  const handleUpgrade = async (planKey: "pro" | "business") => {
+    setLoadingPlan(planKey);
+    try {
+      const res = await fetch("/api/stripe/create-checkout-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ plan: planKey, interval: isYearly ? "yearly" : "monthly" }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message || "Failed to start checkout");
+      }
+      const { url } = await res.json();
+      window.location.href = url;
+    } catch (err: any) {
+      toast({ title: "Checkout failed", description: err.message, variant: "destructive" });
+      setLoadingPlan(null);
+    }
+  };
 
   const plans = [
     {
@@ -159,7 +223,7 @@ export default function Pricing() {
       features: t.pricing.freePlanFeatures,
       isPopular: false,
       icon: Sparkles,
-      ctaLabel: userPlan === "free" ? t.pricing.currentPlan : t.pricing.getStarted,
+      ctaLabel: t.pricing.getStarted,
       ctaVariant: "outline" as const,
       highlight: false,
     },
@@ -172,10 +236,9 @@ export default function Pricing() {
       features: t.pricing.proPlanFeatures,
       isPopular: true,
       icon: Zap,
-      ctaLabel: userPlan === "pro" ? t.pricing.currentPlan : t.pricing.upgradeBtn,
+      ctaLabel: t.pricing.upgradeBtn,
       ctaVariant: "default" as const,
       highlight: true,
-      comingSoon: t.pricing.comingSoon,
     },
     {
       key: "business",
@@ -186,10 +249,9 @@ export default function Pricing() {
       features: t.pricing.businessPlanFeatures,
       isPopular: false,
       icon: Building2,
-      ctaLabel: userPlan === "business" ? t.pricing.currentPlan : t.pricing.contactSales,
+      ctaLabel: t.pricing.upgradeBtn,
       ctaVariant: "secondary" as const,
       highlight: false,
-      comingSoon: t.pricing.comingSoon,
     },
   ];
 
@@ -242,6 +304,7 @@ export default function Pricing() {
         {plans.map((plan) => (
           <PlanCard
             key={plan.key}
+            planKey={plan.key}
             name={plan.name}
             description={plan.description}
             price={plan.price}
@@ -254,18 +317,38 @@ export default function Pricing() {
             ctaVariant={plan.ctaVariant}
             icon={plan.icon}
             highlight={plan.highlight}
-            comingSoon={plan.comingSoon}
+            isLoading={loadingPlan === plan.key}
+            onUpgrade={plan.key !== "free" ? () => handleUpgrade(plan.key as "pro" | "business") : undefined}
           />
         ))}
       </div>
 
-      {/* Feature comparison note */}
+      {/* Manage billing for paid users */}
+      {(userPlan === "pro" || userPlan === "business") && (
+        <div className="rounded-2xl border border-primary/20 bg-primary/5 p-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div>
+            <p className="font-semibold text-foreground">Manage your subscription</p>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              Update payment method, download invoices, or cancel your plan.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            onClick={handleManageBilling}
+            disabled={portalLoading}
+            data-testid="btn-manage-billing"
+            className="shrink-0"
+          >
+            {portalLoading ? <><Loader2 className="w-4 h-4 me-2 animate-spin" /> Loading…</> : "Manage Billing"}
+          </Button>
+        </div>
+      )}
+
+      {/* Trust line */}
       <div className="rounded-2xl border border-border bg-muted/30 p-6 text-center space-y-2">
-        <p className="text-sm font-semibold text-foreground">
-          {t.pricing.comingSoon}
-        </p>
+        <p className="text-sm font-semibold text-foreground">🔒 Secure payments powered by Stripe</p>
         <p className="text-xs text-muted-foreground">
-          All plans include SSL, 99.9% uptime, and world-class support.
+          All plans include SSL, 99.9% uptime, and world-class support. Cancel anytime.
         </p>
       </div>
 

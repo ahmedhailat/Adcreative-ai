@@ -1,56 +1,23 @@
-import Stripe from 'stripe';
-import { StripeSync } from 'stripe-replit-sync';
+import Stripe from "stripe";
 
-async function getStripeCredentials(): Promise<{ secretKey: string; webhookSecret?: string }> {
-  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
-  const xReplitToken = process.env.REPL_IDENTITY
-    ? "repl " + process.env.REPL_IDENTITY
-    : process.env.WEB_REPL_RENEWAL
-      ? "depl " + process.env.WEB_REPL_RENEWAL
-      : null;
-
-  if (!hostname || !xReplitToken) {
-    throw new Error('Stripe integration not connected. Please connect Stripe via the Integrations tab.');
-  }
-
-  const resp = await fetch(
-    `https://${hostname}/api/v2/connection?include_secrets=true&connector_names=stripe`,
-    {
-      headers: { Accept: "application/json", X_REPLIT_TOKEN: xReplitToken },
-      signal: AbortSignal.timeout(10_000),
-    }
-  );
-
-  if (!resp.ok) {
-    throw new Error(`Failed to fetch Stripe credentials: ${resp.status} ${resp.statusText}`);
-  }
-
-  const data = await resp.json();
-  const settings = data.items?.[0]?.settings;
-
-  if (!settings?.secret_key) {
-    throw new Error('Stripe integration not connected or missing secret key.');
-  }
-
-  return {
-    secretKey: settings.secret_key,
-    webhookSecret: settings.webhook_secret,
-  };
+if (!process.env.STRIPE_SECRET_KEY) {
+  throw new Error("STRIPE_SECRET_KEY environment variable is required");
 }
 
-export async function getUncachableStripeClient(): Promise<Stripe> {
-  const { secretKey } = await getStripeCredentials();
-  return new Stripe(secretKey);
-}
+export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+  apiVersion: "2026-04-22.dahlia",
+});
 
-export async function getStripeSync(): Promise<StripeSync> {
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) throw new Error('DATABASE_URL environment variable is required');
+export const STRIPE_PLANS = {
+  pro: {
+    monthly: "price_pro_monthly",
+    yearly: "price_pro_yearly",
+  },
+  business: {
+    monthly: "price_business_monthly",
+    yearly: "price_business_yearly",
+  },
+} as const;
 
-  const { secretKey, webhookSecret } = await getStripeCredentials();
-  return new StripeSync({
-    poolConfig: { connectionString: databaseUrl },
-    stripeSecretKey: secretKey,
-    stripeWebhookSecret: webhookSecret ?? '',
-  });
-}
+export type PlanKey = "pro" | "business";
+export type BillingInterval = "monthly" | "yearly";

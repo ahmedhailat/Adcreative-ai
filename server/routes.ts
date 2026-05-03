@@ -6,6 +6,8 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { storage } from "./storage";
+import { stripe } from "./stripeClient";
+import { handleStripeWebhook } from "./webhookHandlers";
 import { api } from "@shared/routes";
 import { AD_FORMATS } from "@shared/schema";
 import { z } from "zod";
@@ -473,6 +475,101 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.delete(api.creatives.delete.path, async (req, res) => {
     await storage.deleteCreative(Number(req.params.id));
     res.status(204).send();
+  });
+
+  // ===== STRIPE =====
+
+  // Webhook — must come BEFORE express.json() parses body, rawBody captured in index.ts
+  app.post("/api/stripe/webhook", handleStripeWebhook);
+
+  // Create Checkout Session → returns { url }
+  app.post("/api/stripe/create-checkout-session", async (req, res) => {
+    const userId = req.session?.userId;
+    if (!userId) return res.status(401).json({ message: "Not authenticated" });
+
+    const { plan, interval } = req.body as { plan: "pro" | "business"; interval: "monthly" | "yearly" };
+    if (!plan || !["pro", "business"].includes(plan)) {
+      return res.status(400).json({ message: "Invalid plan" });
+    }
+
+    const user = await storage.getUserById(userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    // Price lookup keys follow the pattern: plan_interval (e.g. pro_monthly)
+    const lookupKey = `${plan}_${interval ?? "monthly"}`;
+
+    try {
+      // Look up the price by lookup_key set in Stripe dashboard
+      const prices = await stripe.prices.list({ lookup_keys: [lookupKey], expand: ["data.product"] });
+
+      let priceId: string;
+      if (prices.data.length > 0) {
+        priceId = prices.data[0].id;
+      } else {
+        // Fallback: create price on-the-fly if lookup key not found
+        const unitAmount = plan === "pro"
+          ? (interval === "yearly" ? 27600 : 2900)
+          : (interval === "yearly" ? 75600 : 7900);
+        const productName = plan === "pro" ? "AdCreative Pro" : "AdCreative Business";
+
+        const product = await stripe.products.create({ name: productName });
+        const price = await stripe.prices.create({
+          product: product.id,
+          unit_amount: unitAmount,
+          currency: "usd",
+          recurring: { interval: interval === "yearly" ? "year" : "month" },
+          lookup_key: lookupKey,
+        });
+        priceId = price.id;
+      }
+
+      const appUrl = process.env.REPLIT_DEV_DOMAIN
+        ? `https://${process.env.REPLIT_DEV_DOMAIN}`
+        : (process.env.APP_URL || "http://localhost:5000");
+
+      const session = await stripe.checkout.sessions.create({
+        mode: "subscription",
+        payment_method_types: ["card"],
+        line_items: [{ price: priceId, quantity: 1 }],
+        success_url: `${appUrl}/pricing?success=true&plan=${plan}`,
+        cancel_url: `${appUrl}/pricing?canceled=true`,
+        customer_email: user.email,
+        metadata: { userId: String(userId), plan },
+        subscription_data: { metadata: { userId: String(userId), plan } },
+      });
+
+      res.json({ url: session.url });
+    } catch (err: any) {
+      console.error("[stripe] create-checkout-session error:", err.message);
+      res.status(500).json({ message: err.message || "Failed to create checkout session" });
+    }
+  });
+
+  // Create Customer Portal session → returns { url }
+  app.post("/api/stripe/create-portal-session", async (req, res) => {
+    const userId = req.session?.userId;
+    if (!userId) return res.status(401).json({ message: "Not authenticated" });
+
+    const user = await storage.getUserById(userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const customerId = (user as any).stripeCustomerId;
+    if (!customerId) return res.status(400).json({ message: "No Stripe customer found. Please subscribe first." });
+
+    try {
+      const appUrl = process.env.REPLIT_DEV_DOMAIN
+        ? `https://${process.env.REPLIT_DEV_DOMAIN}`
+        : (process.env.APP_URL || "http://localhost:5000");
+
+      const portalSession = await stripe.billingPortal.sessions.create({
+        customer: customerId,
+        return_url: `${appUrl}/pricing`,
+      });
+      res.json({ url: portalSession.url });
+    } catch (err: any) {
+      console.error("[stripe] create-portal-session error:", err.message);
+      res.status(500).json({ message: err.message || "Failed to create portal session" });
+    }
   });
 
   seedDatabase();
