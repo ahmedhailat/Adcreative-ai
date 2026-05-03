@@ -214,8 +214,8 @@ const translations = {
       proDesc: "For growing businesses and marketers",
       businessDesc: "For agencies and large teams",
       freePrice: "$0",
-      proPrice: "$1",
-      businessPrice: "$1",
+      proPrice: "$7",
+      businessPrice: "$7",
       features: "Features",
       freePlanFeatures: [
         "5 AI-generated creatives/month",
@@ -510,8 +510,8 @@ const translations = {
       proDesc: "للشركات المتنامية والمسوّقين",
       businessDesc: "للوكالات والفرق الكبيرة",
       freePrice: "$0",
-      proPrice: "$1",
-      businessPrice: "$1",
+      proPrice: "$7",
+      businessPrice: "$7",
       features: "المميزات",
       freePlanFeatures: [
         "5 إعلانات بالذكاء الاصطناعي/شهر",
