@@ -1,19 +1,27 @@
 import { db } from "./db";
 import { eq } from "drizzle-orm";
 import {
-  brands, creatives,
+  brands, creatives, users,
   type Brand, type InsertBrand,
   type Creative, type InsertCreative,
+  type User, type InsertUser,
   type DashboardStats,
 } from "@shared/schema";
 
 export interface IStorage {
+  // Auth
+  getUserByEmail(email: string): Promise<User | undefined>;
+  getUserById(id: number): Promise<User | undefined>;
+  createUser(user: InsertUser): Promise<User>;
+  // Dashboard
   getDashboardStats(): Promise<DashboardStats>;
+  // Brands
   getBrands(): Promise<Brand[]>;
   getBrand(id: number): Promise<Brand | undefined>;
   createBrand(brand: InsertBrand): Promise<Brand>;
   updateBrand(id: number, updates: Partial<InsertBrand>): Promise<Brand | undefined>;
   deleteBrand(id: number): Promise<void>;
+  // Creatives
   getCreatives(brandId?: number): Promise<Creative[]>;
   getCreative(id: number): Promise<Creative | undefined>;
   createCreative(creative: Omit<Creative, "id" | "createdAt">): Promise<Creative>;
@@ -22,6 +30,21 @@ export interface IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.email, email));
+    return user;
+  }
+
+  async getUserById(id: number): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user;
+  }
+
+  async createUser(user: InsertUser): Promise<User> {
+    const [created] = await db.insert(users).values(user).returning();
+    return created;
+  }
+
   async getDashboardStats(): Promise<DashboardStats> {
     const allBrands = await db.select().from(brands);
     const allCreatives = await db.select().from(creatives);

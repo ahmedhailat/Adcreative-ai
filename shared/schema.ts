@@ -3,6 +3,16 @@ import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+// === USERS TABLE ===
+export const users = pgTable("users", {
+  id: serial("id").primaryKey(),
+  email: text("email").notNull().unique(),
+  password: text("password").notNull(),
+  name: text("name").notNull(),
+  avatarUrl: text("avatar_url"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // === BRANDS TABLE ===
 export const brands = pgTable("brands", {
   id: serial("id").primaryKey(),
@@ -22,17 +32,17 @@ export const creatives = pgTable("creatives", {
   id: serial("id").primaryKey(),
   brandId: integer("brand_id").references(() => brands.id).notNull(),
   title: text("title").notNull(),
-  platform: text("platform").notNull(), // facebook, instagram, google, tiktok, twitter, linkedin
-  formatSize: text("format_size").notNull(), // e.g. "1080x1080"
-  formatName: text("format_name").notNull(), // e.g. "Instagram Post"
+  platform: text("platform").notNull(),
+  formatSize: text("format_size").notNull(),
+  formatName: text("format_name").notNull(),
   productName: text("product_name").notNull(),
   productDescription: text("product_description").notNull(),
   targetAudience: text("target_audience"),
-  goal: text("goal").notNull(), // awareness, traffic, leads, sales, engagement
-  adCopy: jsonb("ad_copy"), // { headline, description, cta }
-  imageData: text("image_data"), // base64 data URL or empty while generating
-  status: text("status").notNull().default("generating"), // generating, ready, failed
-  performanceScore: integer("performance_score"), // 0-100
+  goal: text("goal").notNull(),
+  adCopy: jsonb("ad_copy"),
+  imageData: text("image_data"),
+  status: text("status").notNull().default("generating"),
+  performanceScore: integer("performance_score"),
   isFavorite: boolean("is_favorite").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -47,12 +57,15 @@ export const creativesRelations = relations(creatives, ({ one }) => ({
 }));
 
 // === SCHEMAS ===
+export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, avatarUrl: true });
 export const insertBrandSchema = createInsertSchema(brands).omit({ id: true, createdAt: true });
 export const insertCreativeSchema = createInsertSchema(creatives).omit({ id: true, createdAt: true, adCopy: true, imageData: true, status: true, performanceScore: true }).extend({
   brandId: z.coerce.number().int().positive(),
 });
 
 // === TYPES ===
+export type User = typeof users.$inferSelect;
+export type InsertUser = z.infer<typeof insertUserSchema>;
 export type Brand = typeof brands.$inferSelect;
 export type InsertBrand = z.infer<typeof insertBrandSchema>;
 export type Creative = typeof creatives.$inferSelect;

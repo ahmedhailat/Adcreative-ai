@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import type { Server } from "http";
 import { GoogleGenAI, Modality } from "@google/genai";
+import bcrypt from "bcryptjs";
 import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { AD_FORMATS } from "@shared/schema";
@@ -122,9 +123,96 @@ function calculatePerformanceScore(params: {
   return Math.min(100, score);
 }
 
+const registerSchema = z.object({
+  name: z.string().min(2),
+  email: z.string().email(),
+  password: z.string().min(6),
+});
+
+const loginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(1),
+});
+
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
 
-  // Dashboard
+  // ===== AUTH ROUTES =====
+
+  app.post("/api/auth/register", async (req, res) => {
+    try {
+      const { name, email, password } = registerSchema.parse(req.body);
+
+      const existing = await storage.getUserByEmail(email);
+      if (existing) {
+        return res.status(400).json({ message: "An account with this email already exists" });
+      }
+
+      const hashedPassword = await bcrypt.hash(password, 12);
+      const user = await storage.createUser({ name, email, password: hashedPassword });
+
+      req.session.userId = user.id;
+      await new Promise<void>((resolve, reject) => req.session.save((err) => err ? reject(err) : resolve()));
+
+      const { password: _, ...safeUser } = user;
+      res.status(201).json(safeUser);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0].message });
+      }
+      console.error("Register error:", err);
+      res.status(500).json({ message: "Registration failed" });
+    }
+  });
+
+  app.post("/api/auth/login", async (req, res) => {
+    try {
+      const { email, password } = loginSchema.parse(req.body);
+
+      const user = await storage.getUserByEmail(email);
+      if (!user) {
+        return res.status(401).json({ message: "Invalid email or password" });
+      }
+
+      const valid = await bcrypt.compare(password, user.password);
+      if (!valid) {
+        return res.status(401).json({ message: "Invalid email or password" });
+      }
+
+      req.session.userId = user.id;
+      await new Promise<void>((resolve, reject) => req.session.save((err) => err ? reject(err) : resolve()));
+
+      const { password: _, ...safeUser } = user;
+      res.json(safeUser);
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0].message });
+      }
+      console.error("Login error:", err);
+      res.status(500).json({ message: "Login failed" });
+    }
+  });
+
+  app.post("/api/auth/logout", (req, res) => {
+    req.session.destroy((err) => {
+      if (err) return res.status(500).json({ message: "Logout failed" });
+      res.clearCookie("connect.sid");
+      res.json({ message: "Logged out" });
+    });
+  });
+
+  app.get("/api/auth/me", async (req, res) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+    const user = await storage.getUserById(req.session.userId);
+    if (!user) {
+      return res.status(401).json({ message: "User not found" });
+    }
+    const { password: _, ...safeUser } = user;
+    res.json(safeUser);
+  });
+
+  // ===== DASHBOARD =====
   app.get(api.dashboard.stats.path, async (_req, res) => {
     try {
       const stats = await storage.getDashboardStats();
@@ -139,7 +227,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(AD_FORMATS);
   });
 
-  // Brands
+  // ===== BRANDS =====
   app.get(api.brands.list.path, async (_req, res) => {
     const brands = await storage.getBrands();
     res.json(brands);
@@ -175,7 +263,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.status(204).send();
   });
 
-  // Creatives
+  // ===== CREATIVES =====
   app.get(api.creatives.list.path, async (req, res) => {
     const brandId = req.query.brandId ? Number(req.query.brandId) : undefined;
     const list = await storage.getCreatives(brandId);
@@ -188,14 +276,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(creative);
   });
 
-  // Main AI generation endpoint
   app.post(api.creatives.generate.path, async (req, res) => {
     try {
       const input = api.creatives.generate.input.parse(req.body);
       const brand = await storage.getBrand(input.brandId);
       if (!brand) return res.status(404).json({ message: "Brand not found" });
 
-      // Create creative with "generating" status immediately
       const creative = await storage.createCreative({
         brandId: input.brandId,
         title: input.title,
@@ -213,10 +299,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         isFavorite: false,
       });
 
-      // Return immediately so frontend can start polling
       res.status(201).json(creative);
 
-      // Generate in background asynchronously
       (async () => {
         try {
           const adCopy = await generateAdCopy({
@@ -286,7 +370,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.status(204).send();
   });
 
-  // Seed on startup
   seedDatabase();
 
   return httpServer;
