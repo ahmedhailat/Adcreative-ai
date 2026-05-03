@@ -5,24 +5,20 @@ import {
   type Brand, type InsertBrand,
   type Creative, type InsertCreative,
   type User, type InsertUser,
-  type DashboardStats,
+  type DashboardStats, type CreativeWithBrand,
 } from "@shared/schema";
 
 export interface IStorage {
-  // Auth
   getUserByEmail(email: string): Promise<User | undefined>;
   getUserById(id: number): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
-  // Dashboard
   getDashboardStats(): Promise<DashboardStats>;
-  // Brands
   getBrands(): Promise<Brand[]>;
   getBrand(id: number): Promise<Brand | undefined>;
   createBrand(brand: InsertBrand): Promise<Brand>;
   updateBrand(id: number, updates: Partial<InsertBrand>): Promise<Brand | undefined>;
   deleteBrand(id: number): Promise<void>;
-  // Creatives
-  getCreatives(brandId?: number): Promise<Creative[]>;
+  getCreatives(brandId?: number): Promise<CreativeWithBrand[]>;
   getCreative(id: number): Promise<Creative | undefined>;
   createCreative(creative: Omit<Creative, "id" | "createdAt">): Promise<Creative>;
   updateCreative(id: number, updates: Partial<Creative>): Promise<Creative | undefined>;
@@ -80,11 +76,21 @@ export class DatabaseStorage implements IStorage {
     await db.delete(brands).where(eq(brands.id, id));
   }
 
-  async getCreatives(brandId?: number): Promise<Creative[]> {
-    if (brandId) {
-      return db.select().from(creatives).where(eq(creatives.brandId, brandId)).orderBy(creatives.createdAt);
-    }
-    return db.select().from(creatives).orderBy(creatives.createdAt);
+  async getCreatives(brandId?: number): Promise<CreativeWithBrand[]> {
+    const rows = await db
+      .select({
+        creative: creatives,
+        brand: brands,
+      })
+      .from(creatives)
+      .innerJoin(brands, eq(creatives.brandId, brands.id))
+      .orderBy(creatives.createdAt);
+
+    const filtered = brandId
+      ? rows.filter(r => r.creative.brandId === brandId)
+      : rows;
+
+    return filtered.map(r => ({ ...r.creative, brand: r.brand }));
   }
 
   async getCreative(id: number): Promise<Creative | undefined> {

@@ -1,96 +1,92 @@
-# Workspace
+# AdCreative AI Platform
 
 ## Overview
 
-pnpm workspace monorepo using TypeScript. Each package manages its own dependencies.
+AI-powered advertising creative generation platform. Users manage brands, generate professional ad creatives using Gemini AI, browse a creative library, and download ads in various platform formats.
 
 ## Stack
 
-- **Monorepo tool**: pnpm workspaces
-- **Node.js version**: 24
-- **Package manager**: pnpm
-- **TypeScript version**: 5.9
-- **API framework**: Express 5
+- **Frontend**: React + Vite + TypeScript + TailwindCSS + shadcn/ui
+- **Backend**: Express.js + TypeScript
 - **Database**: PostgreSQL + Drizzle ORM
-- **Validation**: Zod (`zod/v4`), `drizzle-zod`
-- **API codegen**: Orval (from OpenAPI spec)
-- **Build**: esbuild (CJS bundle)
+- **AI**: Google Gemini (via Replit AI Integrations) — `gemini-2.5-flash` (copy) + `gemini-2.5-flash-image` (image generation)
+- **Auth**: Session-based with express-session + connect-pg-simple + bcryptjs
+- **State**: TanStack Query v5
+- **Routing**: wouter
+- **Animations**: framer-motion
+- **Icons**: lucide-react + react-icons/si
 
-## Structure
+## Project Structure
 
-```text
-artifacts-monorepo/
-├── artifacts/              # Deployable applications
-│   └── api-server/         # Express API server
-├── lib/                    # Shared libraries
-│   ├── api-spec/           # OpenAPI spec + Orval codegen config
-│   ├── api-client-react/   # Generated React Query hooks
-│   ├── api-zod/            # Generated Zod schemas from OpenAPI
-│   └── db/                 # Drizzle ORM schema + DB connection
-├── scripts/                # Utility scripts (single workspace package)
-│   └── src/                # Individual .ts scripts, run via `pnpm --filter @workspace/scripts run <script>`
-├── pnpm-workspace.yaml     # pnpm workspace (artifacts/*, lib/*, lib/integrations/*, scripts)
-├── tsconfig.base.json      # Shared TS options (composite, bundler resolution, es2022)
-├── tsconfig.json           # Root TS project references
-└── package.json            # Root package with hoisted devDeps
+```
+client/src/
+├── pages/
+│   ├── Dashboard.tsx       # Main dashboard (stats, quick actions, recent creatives)
+│   ├── Login.tsx           # Login + Register (split-panel design)
+│   ├── Brands.tsx          # Brand management CRUD
+│   ├── Studio.tsx          # 3-step AI creative generation wizard
+│   └── Library.tsx         # Creative library with filters
+├── components/
+│   ├── Layout.tsx          # Sidebar + header with user menu
+│   └── ThemeToggle.tsx     # Light/dark mode toggle
+├── hooks/
+│   ├── use-auth.ts         # Auth state (useQuery /api/auth/me + logout mutation)
+│   ├── use-brands.ts       # Brand CRUD hooks
+│   ├── use-creatives.ts    # Creative hooks (with polling for generating status)
+│   ├── use-dashboard.ts    # Dashboard stats hook
+│   └── use-toast.ts        # Toast notifications
+└── lib/
+    └── queryClient.ts      # TanStack Query client (returnNull on 401)
+
+server/
+├── index.ts                # Express app + session middleware setup
+├── routes.ts               # All API routes (auth + brands + creatives)
+├── storage.ts              # DatabaseStorage class (IStorage interface)
+└── db.ts                   # Drizzle DB connection
+
+shared/
+├── schema.ts               # DB tables (users, brands, creatives) + types
+└── routes.ts               # API route definitions with Zod schemas
 ```
 
-## TypeScript & Composite Projects
+## Database Schema
 
-Every package extends `tsconfig.base.json` which sets `composite: true`. The root `tsconfig.json` lists all packages as project references. This means:
+- **users**: id, email, password (bcrypt), name, avatarUrl, createdAt
+- **brands**: id, name, logoUrl, primaryColor, secondaryColor, fontFamily, industry, website, description, createdAt
+- **creatives**: id, brandId, title, platform, formatSize, formatName, productName, productDescription, targetAudience, goal, adCopy (jsonb), imageData (base64), status, performanceScore, isFavorite, createdAt
 
-- **Always typecheck from the root** — run `pnpm run typecheck` (which runs `tsc --build --emitDeclarationOnly`). This builds the full dependency graph so that cross-package imports resolve correctly. Running `tsc` inside a single package will fail if its dependencies haven't been built yet.
-- **`emitDeclarationOnly`** — we only emit `.d.ts` files during typecheck; actual JS bundling is handled by esbuild/tsx/vite...etc, not `tsc`.
-- **Project references** — when package A depends on package B, A's `tsconfig.json` must list B in its `references` array. `tsc --build` uses this to determine build order and skip up-to-date packages.
+## Auth Flow
 
-## Root Scripts
+- POST `/api/auth/register` — bcrypt hash, create user, set session
+- POST `/api/auth/login` — verify password, set session
+- POST `/api/auth/logout` — destroy session
+- GET `/api/auth/me` — returns user from session (401 if not authenticated)
+- Frontend: `use-auth.ts` → `useQuery(["/api/auth/me"])` with `on401: "returnNull"` — returns null when not logged in
+- Protected routes: `useEffect` redirect to `/login` when not authenticated
 
-- `pnpm run build` — runs `typecheck` first, then recursively runs `build` in all packages that define it
-- `pnpm run typecheck` — runs `tsc --build --emitDeclarationOnly` using project references
+## AI Generation Flow
 
-## Packages
+1. POST `/api/creatives/generate` — creates creative with `status="generating"`, returns immediately
+2. Background async: generateAdCopy (Gemini text) → generateAdImage (Gemini image) → updateCreative to `status="ready"`
+3. Frontend polls every 2s via `useCreative(id)` until status is no longer "generating"
 
-### `artifacts/api-server` (`@workspace/api-server`)
+## Important CSS Notes
 
-Express 5 API server. Routes live in `src/routes/` and use `@workspace/api-zod` for request and response validation and `@workspace/db` for persistence.
+- Uses Tailwind v3 (NOT v4): `@tailwind base/components/utilities` in index.css
+- Theme: violet/purple primary (262 83% 58% light, 262 83% 65% dark)
+- Dark mode default, uses `next-themes`
+- Custom classes: `.glass-card`, `.text-gradient`, `.hover-lift`
 
-- Entry: `src/index.ts` — reads `PORT`, starts Express
-- App setup: `src/app.ts` — mounts CORS, JSON/urlencoded parsing, routes at `/api`
-- Routes: `src/routes/index.ts` mounts sub-routers; `src/routes/health.ts` exposes `GET /health` (full path: `/api/health`)
-- Depends on: `@workspace/db`, `@workspace/api-zod`
-- `pnpm --filter @workspace/api-server run dev` — run the dev server
-- `pnpm --filter @workspace/api-server run build` — production esbuild bundle (`dist/index.cjs`)
-- Build bundles an allowlist of deps (express, cors, pg, drizzle-orm, zod, etc.) and externalizes the rest
+## PWA Support
 
-### `lib/db` (`@workspace/db`)
+- `client/public/manifest.json` — PWA manifest for iOS/Android install
+- Mobile meta tags in `client/index.html` (apple-mobile-web-app-capable, theme-color)
+- Can be installed on iOS via Safari "Add to Home Screen"
+- Can be installed on Android via Chrome "Add to Home Screen" / Play Store via TWA
 
-Database layer using Drizzle ORM with PostgreSQL. Exports a Drizzle client instance and schema models.
+## Environment Variables
 
-- `src/index.ts` — creates a `Pool` + Drizzle instance, exports schema
-- `src/schema/index.ts` — barrel re-export of all models
-- `src/schema/<modelname>.ts` — table definitions with `drizzle-zod` insert schemas (no models definitions exist right now)
-- `drizzle.config.ts` — Drizzle Kit config (requires `DATABASE_URL`, automatically provided by Replit)
-- Exports: `.` (pool, db, schema), `./schema` (schema only)
-
-Production migrations are handled by Replit when publishing. In development, we just use `pnpm --filter @workspace/db run push`, and we fallback to `pnpm --filter @workspace/db run push-force`.
-
-### `lib/api-spec` (`@workspace/api-spec`)
-
-Owns the OpenAPI 3.1 spec (`openapi.yaml`) and the Orval config (`orval.config.ts`). Running codegen produces output into two sibling packages:
-
-1. `lib/api-client-react/src/generated/` — React Query hooks + fetch client
-2. `lib/api-zod/src/generated/` — Zod schemas
-
-Run codegen: `pnpm --filter @workspace/api-spec run codegen`
-
-### `lib/api-zod` (`@workspace/api-zod`)
-
-Generated Zod schemas from the OpenAPI spec (e.g. `HealthCheckResponse`). Used by `api-server` for response validation.
-
-### `lib/api-client-react` (`@workspace/api-client-react`)
-
-Generated React Query hooks and fetch client from the OpenAPI spec (e.g. `useHealthCheck`, `healthCheck`).
-
-### `scripts` (`@workspace/scripts`)
-
-Utility scripts package. Each script is a `.ts` file in `src/` with a corresponding npm script in `package.json`. Run scripts via `pnpm --filter @workspace/scripts run <script>`. Scripts can import any workspace package (e.g., `@workspace/db`) by adding it as a dependency in `scripts/package.json`.
+- `DATABASE_URL` — PostgreSQL connection string (provided by Replit)
+- `SESSION_SECRET` — Session signing secret (set in Replit secrets)
+- `AI_INTEGRATIONS_GEMINI_API_KEY` — Gemini API key (via Replit AI integration)
+- `AI_INTEGRATIONS_GEMINI_BASE_URL` — Gemini base URL (via Replit AI integration)
