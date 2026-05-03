@@ -49,12 +49,26 @@ export default function Studio() {
   });
 
   const handleNext = () => {
-    if (step === 1 && (!formData.brandId || !formData.formatSize)) {
-      toast({ title: "Please select a brand and format", variant: "destructive" });
-      return;
+    if (step === 1) {
+      if (!formData.brandId && !formData.formatSize) {
+        toast({ title: "Select a brand and ad format to continue", description: "Choose a brand from the grid above, then pick an ad format.", variant: "destructive" });
+        return;
+      }
+      if (!formData.brandId) {
+        toast({ title: "Select a brand first", description: "Click one of the brand cards above to select it.", variant: "destructive" });
+        return;
+      }
+      if (!formData.formatSize) {
+        toast({ title: "Select an ad format", description: "Choose a platform format (e.g. Instagram Post, Facebook Ad) below the brand section.", variant: "destructive" });
+        return;
+      }
     }
     if (step === 2 && (!formData.productName || !formData.productDescription)) {
-      toast({ title: "Please fill in the required fields", variant: "destructive" });
+      if (!formData.productName) {
+        toast({ title: "Product name is required", description: "Enter the name of what you're advertising.", variant: "destructive" });
+      } else {
+        toast({ title: "Product description is required", description: "Describe your product's key benefits so the AI can write compelling copy.", variant: "destructive" });
+      }
       return;
     }
     if (step === 2) {
@@ -145,6 +159,12 @@ export default function Studio() {
                   <span className="text-primary font-bold text-sm">1</span>
                 </div>
                 <h2 className="text-xl font-bold">Select Your Brand</h2>
+                {!formData.brandId && (
+                  <span className="ml-auto text-xs font-semibold text-muted-foreground bg-muted px-2.5 py-1 rounded-full">← pick one</span>
+                )}
+                {formData.brandId && (
+                  <CheckCircle2 className="ml-auto w-5 h-5 text-green-500" />
+                )}
               </div>
 
               {brandsLoading ? (
@@ -198,6 +218,12 @@ export default function Studio() {
                   <span className="text-primary font-bold text-sm">2</span>
                 </div>
                 <h2 className="text-xl font-bold">Select Ad Format</h2>
+                {!formData.formatSize && (
+                  <span className="ml-auto text-xs font-semibold text-muted-foreground bg-muted px-2.5 py-1 rounded-full">← pick one</span>
+                )}
+                {formData.formatSize && (
+                  <CheckCircle2 className="ml-auto w-5 h-5 text-green-500" />
+                )}
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
@@ -237,7 +263,6 @@ export default function Studio() {
               <Button
                 size="lg"
                 onClick={handleNext}
-                disabled={!formData.brandId || !formData.formatSize}
                 data-testid="button-next-step1"
                 className="h-12 px-8 rounded-xl shadow-lg shadow-primary/20"
               >
@@ -328,7 +353,7 @@ export default function Studio() {
                   <Button
                     size="lg"
                     onClick={handleNext}
-                    disabled={!formData.productName || !formData.productDescription || generateCreative.isPending}
+                    disabled={generateCreative.isPending}
                     data-testid="button-generate"
                     className="flex-1 h-12 rounded-xl shadow-lg shadow-primary/25 bg-gradient-to-r from-primary to-purple-500 hover:opacity-90"
                   >
