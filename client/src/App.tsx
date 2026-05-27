@@ -14,6 +14,11 @@ import Library from "@/pages/Library";
 import Pricing from "@/pages/Pricing";
 import Connections from "@/pages/Connections";
 import Analytics from "@/pages/Analytics";
+import Campaigns from "@/pages/Campaigns";
+import Copilot from "@/pages/Copilot";
+import SmartRules from "@/pages/SmartRules";
+import UGC from "@/pages/UGC";
+import BulkLaunch from "@/pages/BulkLaunch";
 import Login from "@/pages/Login";
 import { useAuth } from "@/hooks/use-auth";
 import { LangProvider, useLang } from "@/contexts/LangContext";
@@ -54,6 +59,11 @@ function ProtectedRouter() {
         <Route path="/library" component={Library} />
         <Route path="/connections" component={Connections} />
         <Route path="/analytics" component={Analytics} />
+        <Route path="/campaigns" component={Campaigns} />
+        <Route path="/copilot" component={Copilot} />
+        <Route path="/smart-rules" component={SmartRules} />
+        <Route path="/ugc" component={UGC} />
+        <Route path="/bulk-launch" component={BulkLaunch} />
         <Route path="/pricing" component={Pricing} />
         <Route component={NotFound} />
       </Switch>

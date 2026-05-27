@@ -1,11 +1,13 @@
 import { db } from "./db";
 import { eq, sql } from "drizzle-orm";
 import {
-  brands, creatives, users, adAccounts,
+  brands, creatives, users, adAccounts, campaigns, campaignContacts, automationRules,
   type Brand, type InsertBrand,
   type Creative, type InsertCreative,
   type User, type InsertUser,
   type AdAccount, type InsertAdAccount,
+  type Campaign, type CampaignContact,
+  type AutomationRule, type InsertAutomationRule,
   type DashboardStats, type CreativeWithBrand,
 } from "@shared/schema";
 
@@ -31,6 +33,18 @@ export interface IStorage {
   getAdAccounts(userId: number): Promise<AdAccount[]>;
   createAdAccount(account: InsertAdAccount): Promise<AdAccount>;
   deleteAdAccount(id: number, userId: number): Promise<void>;
+  getCampaigns(userId: number): Promise<Campaign[]>;
+  getCampaign(id: number, userId: number): Promise<Campaign | undefined>;
+  createCampaign(campaign: Omit<Campaign, "id" | "createdAt">): Promise<Campaign>;
+  updateCampaign(id: number, updates: Partial<Campaign>): Promise<Campaign | undefined>;
+  deleteCampaign(id: number, userId: number): Promise<void>;
+  getCampaignContacts(campaignId: number): Promise<CampaignContact[]>;
+  addCampaignContacts(campaignId: number, contacts: { phone: string; name?: string }[]): Promise<void>;
+  updateContactStatus(id: number, status: string, sentAt?: Date, error?: string): Promise<void>;
+  getAutomationRules(userId: number): Promise<AutomationRule[]>;
+  createAutomationRule(rule: Omit<AutomationRule, "id" | "createdAt">): Promise<AutomationRule>;
+  updateAutomationRule(id: number, updates: Partial<AutomationRule>): Promise<AutomationRule | undefined>;
+  deleteAutomationRule(id: number, userId: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -135,6 +149,62 @@ export class DatabaseStorage implements IStorage {
 
   async deleteAdAccount(id: number, userId: number): Promise<void> {
     await db.delete(adAccounts).where(eq(adAccounts.id, id));
+  }
+
+  async getCampaigns(userId: number): Promise<Campaign[]> {
+    return db.select().from(campaigns).where(eq(campaigns.userId, userId)).orderBy(campaigns.createdAt);
+  }
+
+  async getCampaign(id: number, userId: number): Promise<Campaign | undefined> {
+    const [c] = await db.select().from(campaigns).where(eq(campaigns.id, id));
+    if (!c || c.userId !== userId) return undefined;
+    return c;
+  }
+
+  async createCampaign(campaign: Omit<Campaign, "id" | "createdAt">): Promise<Campaign> {
+    const [created] = await db.insert(campaigns).values(campaign as any).returning();
+    return created;
+  }
+
+  async updateCampaign(id: number, updates: Partial<Campaign>): Promise<Campaign | undefined> {
+    const [updated] = await db.update(campaigns).set(updates as any).where(eq(campaigns.id, id)).returning();
+    return updated;
+  }
+
+  async deleteCampaign(id: number, userId: number): Promise<void> {
+    await db.delete(campaignContacts).where(eq(campaignContacts.campaignId, id));
+    await db.delete(campaigns).where(eq(campaigns.id, id));
+  }
+
+  async getCampaignContacts(campaignId: number): Promise<CampaignContact[]> {
+    return db.select().from(campaignContacts).where(eq(campaignContacts.campaignId, campaignId));
+  }
+
+  async addCampaignContacts(campaignId: number, contacts: { phone: string; name?: string }[]): Promise<void> {
+    if (contacts.length === 0) return;
+    await db.insert(campaignContacts).values(contacts.map(c => ({ campaignId, phone: c.phone, name: c.name ?? null, status: "pending" })));
+  }
+
+  async updateContactStatus(id: number, status: string, sentAt?: Date, error?: string): Promise<void> {
+    await db.update(campaignContacts).set({ status, sentAt: sentAt ?? null, error: error ?? null } as any).where(eq(campaignContacts.id, id));
+  }
+
+  async getAutomationRules(userId: number): Promise<AutomationRule[]> {
+    return db.select().from(automationRules).where(eq(automationRules.userId, userId)).orderBy(automationRules.createdAt);
+  }
+
+  async createAutomationRule(rule: Omit<AutomationRule, "id" | "createdAt">): Promise<AutomationRule> {
+    const [created] = await db.insert(automationRules).values(rule as any).returning();
+    return created;
+  }
+
+  async updateAutomationRule(id: number, updates: Partial<AutomationRule>): Promise<AutomationRule | undefined> {
+    const [updated] = await db.update(automationRules).set(updates as any).where(eq(automationRules.id, id)).returning();
+    return updated;
+  }
+
+  async deleteAutomationRule(id: number, userId: number): Promise<void> {
+    await db.delete(automationRules).where(eq(automationRules.id, id));
   }
 
   async getProductsWithPrices(): Promise<any[]> {

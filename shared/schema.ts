@@ -63,6 +63,48 @@ export const adAccounts = pgTable("ad_accounts", {
   connectedAt: timestamp("connected_at").defaultNow(),
 });
 
+// === CAMPAIGNS TABLE ===
+export const campaigns = pgTable("campaigns", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").references(() => users.id).notNull(),
+  name: text("name").notNull(),
+  message: text("message").notNull(),
+  type: text("type").notNull().default("sms"),
+  status: text("status").notNull().default("draft"),
+  scheduledAt: timestamp("scheduled_at"),
+  totalContacts: integer("total_contacts").notNull().default(0),
+  sentCount: integer("sent_count").notNull().default(0),
+  failedCount: integer("failed_count").notNull().default(0),
+  mediaUrl: text("media_url"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// === CAMPAIGN CONTACTS TABLE ===
+export const campaignContacts = pgTable("campaign_contacts", {
+  id: serial("id").primaryKey(),
+  campaignId: integer("campaign_id").references(() => campaigns.id).notNull(),
+  phone: text("phone").notNull(),
+  name: text("name"),
+  status: text("status").notNull().default("pending"),
+  sentAt: timestamp("sent_at"),
+  error: text("error"),
+});
+
+// === AUTOMATION RULES TABLE ===
+export const automationRules = pgTable("automation_rules", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").references(() => users.id).notNull(),
+  name: text("name").notNull(),
+  platform: text("platform").notNull().default("all"),
+  condition: text("condition").notNull(),
+  threshold: text("threshold").notNull(),
+  action: text("action").notNull(),
+  actionValue: text("action_value"),
+  isActive: boolean("is_active").notNull().default(true),
+  triggeredCount: integer("triggered_count").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // === RELATIONS ===
 export const brandsRelations = relations(brands, ({ many }) => ({
   creatives: many(creatives),
@@ -80,6 +122,12 @@ export const insertCreativeSchema = createInsertSchema(creatives).omit({ id: tru
 });
 
 // === TYPES ===
+export type Campaign = typeof campaigns.$inferSelect;
+export type InsertCampaign = Omit<Campaign, "id" | "createdAt">;
+export type CampaignContact = typeof campaignContacts.$inferSelect;
+export type AutomationRule = typeof automationRules.$inferSelect;
+export type InsertAutomationRule = Omit<AutomationRule, "id" | "createdAt">;
+
 export type AdAccount = typeof adAccounts.$inferSelect;
 export type InsertAdAccount = Omit<AdAccount, "id" | "connectedAt">;
 

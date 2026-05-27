@@ -12,7 +12,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { LayoutDashboard, Palette, Wand2, Images, LogOut, ChevronDown, User, Languages, Check, Crown, Zap, Link2, BarChart3 } from "lucide-react";
+import { LayoutDashboard, Palette, Wand2, Images, LogOut, ChevronDown, User, Languages, Check, Crown, Zap, Link2, BarChart3, MessageSquare, Bot, Video, Rocket, Settings2 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useLang, type Lang } from "@/contexts/LangContext";
 import {
@@ -168,6 +168,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
     { title: t.nav.pricing, url: "/pricing", icon: Crown },
   ];
 
+  const aiNavItems = [
+    { title: t.nav.campaigns, url: "/campaigns", icon: MessageSquare },
+    { title: t.nav.copilot, url: "/copilot", icon: Bot },
+    { title: t.nav.smartRules, url: "/smart-rules", icon: Settings2 },
+    { title: t.nav.ugc, url: "/ugc", icon: Video },
+    { title: t.nav.bulkLaunch, url: "/bulk-launch", icon: Rocket },
+  ];
+
   const style = {
     "--sidebar-width": "16rem",
     "--sidebar-width-icon": "3.5rem",
@@ -199,6 +207,27 @@ export function Layout({ children }: { children: React.ReactNode }) {
                         asChild
                         isActive={location === item.url}
                         data-testid={`nav-${item.url.replace("/", "") || "dashboard"}`}
+                      >
+                        <Link href={item.url}>
+                          <item.icon className="w-4 h-4" />
+                          <span>{item.title}</span>
+                        </Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ))}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+            <SidebarGroup>
+              <SidebarGroupLabel>{t.nav.aiTools}</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {aiNavItems.map((item) => (
+                    <SidebarMenuItem key={item.url}>
+                      <SidebarMenuButton
+                        asChild
+                        isActive={location === item.url}
+                        data-testid={`nav-${item.url.replace("/", "")}`}
                       >
                         <Link href={item.url}>
                           <item.icon className="w-4 h-4" />
