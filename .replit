@@ -54,6 +54,10 @@ author = "agent"
 task = "workflow.run"
 args = "Start application"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "iOS App (Expo)"
+
 [[workflows.workflow]]
 name = "Start application"
 author = "agent"
@@ -65,3 +69,14 @@ outputType = "webview"
 task = "shell.exec"
 args = "npm run dev"
 waitForPort = 5000
+
+[[workflows.workflow]]
+name = "iOS App (Expo)"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd mobile && npx expo start --tunnel"
+
+[workflows.workflow.metadata]
+outputType = "console"
