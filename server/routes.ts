@@ -206,19 +206,32 @@ async function generateAdImage(params: {
 
   console.log(`[image] Generating scene="${sceneKey}" via Pollinations.ai (FLUX)...`);
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 90_000);
-
-  try {
-    const response = await fetch(url, { signal: controller.signal });
-    if (!response.ok) throw new Error(`Pollinations returned ${response.status}`);
-    const buffer = await response.arrayBuffer();
-    const b64 = Buffer.from(buffer).toString("base64");
-    console.log(`[image] Scene "${sceneKey}" done — ${Math.round(b64.length / 1024)}KB`);
-    return `data:image/jpeg;base64,${b64}`;
-  } finally {
-    clearTimeout(timeout);
+  const MAX_ATTEMPTS = 4;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 90_000);
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      if (response.status === 429) {
+        clearTimeout(timeout);
+        if (attempt < MAX_ATTEMPTS) {
+          const wait = attempt * 3000; // 3s, 6s, 9s
+          console.log(`[image] 429 rate limit — retrying in ${wait / 1000}s (attempt ${attempt}/${MAX_ATTEMPTS})`);
+          await new Promise(r => setTimeout(r, wait));
+          continue;
+        }
+        throw new Error("Pollinations rate limit — please try again in a moment");
+      }
+      if (!response.ok) throw new Error(`Pollinations returned ${response.status}`);
+      const buffer = await response.arrayBuffer();
+      const b64 = Buffer.from(buffer).toString("base64");
+      console.log(`[image] Scene "${sceneKey}" done — ${Math.round(b64.length / 1024)}KB`);
+      return `data:image/jpeg;base64,${b64}`;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
+  throw new Error("Image generation failed after all retries");
 }
 
 // Build a safe FFmpeg drawtext value — no shell, uses execFile arg array
@@ -620,11 +633,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
               formatName: input.formatName,
               goal: input.goal,
             };
-            const [heroImage, lifestyleImage, ctaImage] = await Promise.all([
-              generateAdImage({ ...sceneParams, scene: "hero" }),
-              generateAdImage({ ...sceneParams, scene: "lifestyle" }),
-              generateAdImage({ ...sceneParams, scene: "cta" }),
-            ]);
+            // Generate sequentially to avoid rate-limiting Pollinations.ai
+            console.log("[video] Generating 3 scene images sequentially...");
+            const heroImage = await generateAdImage({ ...sceneParams, scene: "hero" });
+            await new Promise(r => setTimeout(r, 1500));
+            const lifestyleImage = await generateAdImage({ ...sceneParams, scene: "lifestyle" });
+            await new Promise(r => setTimeout(r, 1500));
+            const ctaImage = await generateAdImage({ ...sceneParams, scene: "cta" });
             // Step 2: Stitch 3 unique images into a real 15-second MP4
             const videoUrl = await generateAdVideo({
               images: [heroImage, lifestyleImage, ctaImage],
