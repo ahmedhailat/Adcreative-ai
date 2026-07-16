@@ -130,7 +130,7 @@ export default function Login() {
             <div>
               <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full mb-6 border border-white/15 bg-white/5 backdrop-blur-sm">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                <span className="text-white/70 text-xs font-semibold tracking-wide">Powered by Gemini AI</span>
+                <span className="text-white/70 text-xs font-semibold tracking-wide">Powered by FLUX AI</span>
               </div>
               <h1 className="text-5xl font-black text-white leading-[1.1] tracking-tight mb-5">
                 {t.login.createsActuallyConvert}

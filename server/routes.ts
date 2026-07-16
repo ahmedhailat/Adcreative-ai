@@ -1,6 +1,5 @@
 import type { Express } from "express";
 import type { Server } from "http";
-import { GoogleGenAI, Modality } from "@google/genai";
 import bcrypt from "bcryptjs";
 import multer from "multer";
 import path from "path";
@@ -44,15 +43,8 @@ const upload = multer({
   },
 });
 
-const ai = new GoogleGenAI({
-  apiKey: process.env.AI_INTEGRATIONS_GEMINI_API_KEY,
-  httpOptions: {
-    apiVersion: "",
-    baseUrl: process.env.AI_INTEGRATIONS_GEMINI_BASE_URL,
-  },
-});
-
-async function generateAdCopy(params: {
+// ── Ad Copy: smart template engine (no external API needed) ──────────────────
+function generateAdCopy(params: {
   brandName: string;
   brandIndustry: string;
   primaryColor: string;
@@ -62,34 +54,107 @@ async function generateAdCopy(params: {
   goal: string;
   platform: string;
   formatName: string;
-}): Promise<{ headline: string; description: string; cta: string }> {
-  const prompt = `You are an expert advertising copywriter. Generate compelling ad copy for:
+}): { headline: string; description: string; cta: string } {
+  const { productName, brandName, goal, productDescription, targetAudience, brandIndustry } = params;
+  const audience = targetAudience || "everyone";
+  const shortDesc = productDescription.length > 90
+    ? productDescription.slice(0, 87) + "..."
+    : productDescription;
 
-Brand: ${params.brandName} (${params.brandIndustry})
-Product/Service: ${params.productName}
-Description: ${params.productDescription}
-Target Audience: ${params.targetAudience || "General audience"}
-Campaign Goal: ${params.goal}
-Platform: ${params.platform} - ${params.formatName}
+  const hash = (productName + goal + brandName)
+    .split("").reduce((a, c) => a + c.charCodeAt(0), 0);
 
-Return ONLY valid JSON with exactly these fields:
-{
-  "headline": "Attention-grabbing headline (max 10 words)",
-  "description": "Compelling description (max 25 words)",
-  "cta": "Call to action button text (max 4 words)"
-}`;
+  const goalMap: Record<string, { headlines: string[]; descriptions: string[]; ctas: string[] }> = {
+    awareness: {
+      headlines: [
+        `Introducing ${productName} by ${brandName}`,
+        `Meet ${productName} — Made for ${audience}`,
+        `${brandName} Presents: ${productName}`,
+        `The ${brandName} ${productName} Experience`,
+        `Discover What Makes ${productName} Different`,
+      ],
+      descriptions: [
+        shortDesc,
+        `${shortDesc} Trusted by ${brandIndustry} professionals worldwide.`,
+        `${shortDesc} See why thousands choose ${brandName}.`,
+      ],
+      ctas: ["Learn More", "Discover Now", "See How It Works", "Explore"],
+    },
+    sales: {
+      headlines: [
+        `${productName} — Shop Today`,
+        `Get ${productName} at the Best Price`,
+        `${brandName}'s ${productName}: Limited Offer`,
+        `Best Deal on ${productName} — Today Only`,
+        `${productName}: Premium Quality, Unbeatable Price`,
+      ],
+      descriptions: [
+        `${shortDesc} Order now and get it delivered fast.`,
+        `${shortDesc} Special offer for new customers.`,
+        shortDesc,
+      ],
+      ctas: ["Shop Now", "Buy Today", "Get Yours", "Order Now", "Grab the Deal"],
+    },
+    leads: {
+      headlines: [
+        `Interested in ${productName}? Let's Talk`,
+        `Get a Free ${productName} Consultation`,
+        `${brandName}: ${productName} for ${brandIndustry}`,
+        `Transform Your Results with ${productName}`,
+        `Ready to Start with ${productName}?`,
+      ],
+      descriptions: [
+        `${shortDesc} Get a free consultation today.`,
+        `${shortDesc} Our team is ready to help you.`,
+        shortDesc,
+      ],
+      ctas: ["Get a Quote", "Contact Us", "Book a Call", "Request Info", "Start Free"],
+    },
+    traffic: {
+      headlines: [
+        `Explore ${productName} on Our Website`,
+        `${brandName}: Your Source for ${productName}`,
+        `Visit Us & Discover ${productName}`,
+        `See Everything ${brandName} Has to Offer`,
+        `${productName}: Explore the Full Collection`,
+      ],
+      descriptions: [
+        `${shortDesc} Browse our full selection online.`,
+        shortDesc,
+        `${shortDesc} Visit today and see for yourself.`,
+      ],
+      ctas: ["Visit Now", "Browse Today", "See More", "Explore", "Go to Site"],
+    },
+    engagement: {
+      headlines: [
+        `Share Your ${productName} Story`,
+        `Join the ${brandName} Community`,
+        `We Want to Hear From You — ${productName}`,
+        `${productName}: What's Your Experience?`,
+        `Connect with ${brandName} Today`,
+      ],
+      descriptions: [
+        `${shortDesc} Join thousands of happy customers.`,
+        shortDesc,
+        `${shortDesc} Be part of our growing community.`,
+      ],
+      ctas: ["Join Now", "Share Today", "Like & Follow", "Get Involved", "Connect"],
+    },
+  };
 
-  const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash",
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
-  });
+  const data = goalMap[goal] || goalMap.awareness;
+  const hi = hash % data.headlines.length;
+  const di = (hash + 2) % data.descriptions.length;
+  const ci = (hash + 1) % data.ctas.length;
 
-  const text = response.text || "";
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error("No JSON in response");
-  return JSON.parse(jsonMatch[0]);
+  return {
+    headline: data.headlines[hi],
+    description: data.descriptions[di],
+    cta: data.ctas[ci],
+  };
 }
 
+// ── Image generation: Pollinations.ai (free, no API key needed, FLUX model) ──
 async function generateAdImage(params: {
   brandName: string;
   brandIndustry: string;
@@ -106,54 +171,54 @@ async function generateAdImage(params: {
   goal: string;
   scene?: "hero" | "lifestyle" | "cta";
 }): Promise<string> {
+  const emotionByGoal: Record<string, string> = {
+    awareness: "joy and discovery",
+    sales: "desire and excitement",
+    leads: "trust and confidence",
+    traffic: "curiosity and invitation",
+    engagement: "community and belonging",
+  };
+  const emotion = emotionByGoal[params.goal] ?? "professionalism";
+
   const scenePrompts: Record<string, string> = {
-    hero: `Create a premium product hero shot advertisement for "${params.brandName}":
-- SCENE TYPE: Clean product studio shot — isolated product on a sleek gradient background
-- The product "${params.productName}" is the sole focus, photographed professionally with dramatic lighting
-- Use ${params.primaryColor} as the dominant background color with subtle ${params.secondaryColor} accents
-- Minimal text: only the brand name "${params.brandName}" in elegant typography
-- High-end commercial photography style, like Apple or Nike product launches
-- Square 1:1 composition, ultra-clean, premium feel
-- NO cluttered UI, NO buttons, just beautiful product + brand`,
+    hero: `Premium product advertisement photo for ${params.brandName} featuring ${params.productName}. ` +
+      `Clean studio shot, isolated product on sleek gradient background using ${params.primaryColor} color palette. ` +
+      `Dramatic professional lighting, high-end commercial photography like Apple product launch. ` +
+      `Ultra-clean 1:1 composition, luxury brand aesthetic. ${params.productDescription}`,
 
-    lifestyle: `Create a lifestyle advertising scene for "${params.brandName}":
-- SCENE TYPE: Real people in authentic environments using/experiencing "${params.productName}"
-- Warm, aspirational photography — golden hour lighting, candid yet polished
-- The headline "${params.headline}" overlaid naturally on the scene
-- Use ${params.primaryColor} color grading throughout to stay on-brand
-- Feels like a high-end magazine editorial or Instagram ad
-- Show the desired emotional outcome: ${params.goal === "awareness" ? "joy and discovery" : params.goal === "sales" ? "desire and excitement" : "trust and confidence"}
-- Square composition, lifestyle photography aesthetic`,
+    lifestyle: `Lifestyle advertising photograph for ${params.brandName} ${params.productName}. ` +
+      `Real people in authentic setting experiencing ${emotion}. ` +
+      `Warm golden hour lighting, candid yet polished. ${params.primaryColor} color grading. ` +
+      `High-end magazine editorial style, Instagram-worthy. ${params.productDescription}`,
 
-    cta: `Create a bold call-to-action advertisement for "${params.brandName}":
-- SCENE TYPE: High-impact graphic design — strong typography, clear hierarchy
-- Dominant brand color ${params.primaryColor} fills most of the frame as background
-- Huge, bold headline: "${params.headline}"
-- Prominent CTA button with text "${params.cta}" — centered and impossible to miss
-- Brand name "${params.brandName}" displayed clearly
-- Clean geometric design, modern advertising layout
-- Secondary color ${params.secondaryColor} for the CTA button
-- Professional graphic design style, like a Spotify or Airbnb campaign ad`,
+    cta: `Bold graphic advertising poster for ${params.brandName} ${params.productName}. ` +
+      `Strong typography layout, ${params.primaryColor} dominant background. ` +
+      `Professional advertising agency design, Spotify/Airbnb campaign style. ` +
+      `"${params.headline}" headline, "${params.cta}" call to action text visible. ` +
+      `${params.secondaryColor} accent color. Modern clean grid layout.`,
   };
 
   const sceneKey = params.scene ?? "hero";
-  const prompt = scenePrompts[sceneKey] ?? scenePrompts["hero"];
+  const prompt = scenePrompts[sceneKey];
 
-  const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash-image",
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
-    config: { responseModalities: [Modality.TEXT, Modality.IMAGE] },
-  });
+  const seed = Math.floor(Math.random() * 999999);
+  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&model=flux&nologo=true&enhance=false&seed=${seed}`;
 
-  const candidate = response.candidates?.[0];
-  const imagePart = candidate?.content?.parts?.find((p: any) => p.inlineData);
+  console.log(`[image] Generating scene="${sceneKey}" via Pollinations.ai (FLUX)...`);
 
-  if (!imagePart?.inlineData?.data) {
-    throw new Error("No image generated");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 90_000);
+
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) throw new Error(`Pollinations returned ${response.status}`);
+    const buffer = await response.arrayBuffer();
+    const b64 = Buffer.from(buffer).toString("base64");
+    console.log(`[image] Scene "${sceneKey}" done — ${Math.round(b64.length / 1024)}KB`);
+    return `data:image/jpeg;base64,${b64}`;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  const mimeType = imagePart.inlineData.mimeType || "image/png";
-  return `data:${mimeType};base64,${imagePart.inlineData.data}`;
 }
 
 // Build a safe FFmpeg drawtext value — no shell, uses execFile arg array
@@ -526,7 +591,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       (async () => {
         try {
-          const adCopy = await generateAdCopy({
+          const adCopy = generateAdCopy({
             brandName: brand.name,
             brandIndustry: brand.industry,
             primaryColor: brand.primaryColor,
