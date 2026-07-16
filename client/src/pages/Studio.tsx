@@ -113,6 +113,8 @@ export default function Studio() {
   const [isDragOver, setIsDragOver] = useState(false);
   const [progressStep, setProgressStep] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const productNameRef = useRef<HTMLInputElement>(null);
+  const productDescRef = useRef<HTMLTextAreaElement>(null);
 
   const [formData, setFormData] = useState<Partial<GenerateCreativeInput>>({ goal: "awareness" });
 
@@ -168,10 +170,14 @@ export default function Studio() {
     if (step === 2) {
       if (!formData.productName) {
         toast({ title: t.studio.productNameRequired, description: t.studio.productNameRequiredDesc, variant: "destructive" });
+        productNameRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+        setTimeout(() => productNameRef.current?.focus(), 400);
         return;
       }
       if (!formData.productDescription) {
         toast({ title: t.studio.productDescRequired, description: t.studio.productDescRequiredDesc, variant: "destructive" });
+        productDescRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+        setTimeout(() => productDescRef.current?.focus(), 400);
         return;
       }
       if (mediaMode === "video-upload" && !videoFile) {
@@ -520,6 +526,7 @@ export default function Studio() {
                   <div className="space-y-2">
                     <Label className="text-sm font-semibold">{t.studio.productName} <span className="text-destructive">*</span></Label>
                     <Input
+                      ref={productNameRef}
                       data-testid="input-product-name"
                       placeholder={t.studio.productNamePlaceholder}
                       value={formData.productName || ""}
@@ -547,6 +554,7 @@ export default function Studio() {
                 <div className="space-y-2">
                   <Label className="text-sm font-semibold">{t.studio.productDesc} <span className="text-destructive">*</span></Label>
                   <Textarea
+                    ref={productDescRef}
                     data-testid="input-product-description"
                     placeholder={t.studio.productDescPlaceholder}
                     value={formData.productDescription || ""}
@@ -619,9 +627,9 @@ export default function Studio() {
                   <div className="flex items-start gap-3 p-4 rounded-xl bg-indigo-500/10 border border-indigo-500/25">
                     <Film className="w-5 h-5 text-indigo-400 mt-0.5 shrink-0" />
                     <div>
-                      <p className="text-sm font-semibold text-indigo-400">Real MP4 video generation</p>
+                      <p className="text-sm font-semibold text-indigo-400">3 unique AI scenes → real 15-second MP4</p>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        AI generates a professional ad image, then FFmpeg renders it into a 9-second MP4 with Ken Burns zoom + animated text overlay. Takes ~60–90 seconds.
+                        Gemini generates 3 distinct images (product hero, lifestyle, CTA), then FFmpeg stitches them into a polished MP4. Takes ~90–120 seconds.
                       </p>
                     </div>
                   </div>
