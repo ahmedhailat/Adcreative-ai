@@ -104,28 +104,40 @@ async function generateAdImage(params: {
   platform: string;
   formatName: string;
   goal: string;
+  scene?: "hero" | "lifestyle" | "cta";
 }): Promise<string> {
-  const prompt = `Create a professional advertising creative/banner for:
+  const scenePrompts: Record<string, string> = {
+    hero: `Create a premium product hero shot advertisement for "${params.brandName}":
+- SCENE TYPE: Clean product studio shot — isolated product on a sleek gradient background
+- The product "${params.productName}" is the sole focus, photographed professionally with dramatic lighting
+- Use ${params.primaryColor} as the dominant background color with subtle ${params.secondaryColor} accents
+- Minimal text: only the brand name "${params.brandName}" in elegant typography
+- High-end commercial photography style, like Apple or Nike product launches
+- Square 1:1 composition, ultra-clean, premium feel
+- NO cluttered UI, NO buttons, just beautiful product + brand`,
 
-Brand: "${params.brandName}" in ${params.brandIndustry} industry
-Ad Headline: "${params.headline}"
-Ad Description: "${params.description}"
-Call to Action: "${params.cta}"
-Platform: ${params.platform} - ${params.formatName}
-Primary Color: ${params.primaryColor}, Secondary Color: ${params.secondaryColor}
-Font Style: ${params.fontFamily}
-Goal: ${params.goal}
-Product: ${params.productName}
+    lifestyle: `Create a lifestyle advertising scene for "${params.brandName}":
+- SCENE TYPE: Real people in authentic environments using/experiencing "${params.productName}"
+- Warm, aspirational photography — golden hour lighting, candid yet polished
+- The headline "${params.headline}" overlaid naturally on the scene
+- Use ${params.primaryColor} color grading throughout to stay on-brand
+- Feels like a high-end magazine editorial or Instagram ad
+- Show the desired emotional outcome: ${params.goal === "awareness" ? "joy and discovery" : params.goal === "sales" ? "desire and excitement" : "trust and confidence"}
+- Square composition, lifestyle photography aesthetic`,
 
-Create a visually stunning, professional advertisement image with:
-- Bold, readable typography featuring the headline prominently
-- A CTA button with the text "${params.cta}"
-- Professional composition using ${params.primaryColor} and ${params.secondaryColor} as brand colors
-- Modern design suitable for ${params.platform} advertising
-- Clean, polished look that would appeal to the target audience
-- The brand name "${params.brandName}" displayed
-- High contrast text for readability
-- Professional product/service imagery that matches the description`;
+    cta: `Create a bold call-to-action advertisement for "${params.brandName}":
+- SCENE TYPE: High-impact graphic design — strong typography, clear hierarchy
+- Dominant brand color ${params.primaryColor} fills most of the frame as background
+- Huge, bold headline: "${params.headline}"
+- Prominent CTA button with text "${params.cta}" — centered and impossible to miss
+- Brand name "${params.brandName}" displayed clearly
+- Clean geometric design, modern advertising layout
+- Secondary color ${params.secondaryColor} for the CTA button
+- Professional graphic design style, like a Spotify or Airbnb campaign ad`,
+  };
+
+  const sceneKey = params.scene ?? "hero";
+  const prompt = scenePrompts[sceneKey] ?? scenePrompts["hero"];
 
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash-image",
@@ -157,21 +169,26 @@ function ffText(text: string): string {
 }
 
 async function generateAdVideo(params: {
-  imageData: string;
+  images: string[];  // [heroImage, lifestyleImage, ctaImage] as base64 data URLs
   headline: string;
   cta: string;
   primaryColor: string;
   brandName: string;
 }): Promise<string> {
   const id      = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  const imgPath = path.join(os.tmpdir(), `ad_img_${id}.png`);
   const outPath = path.join(VIDEO_DIR, `${id}.mp4`);
 
-  console.log("[video] Generating 3-scene cinematic ad:", params.headline);
+  console.log("[video] Generating 3-scene cinematic ad with distinct scenes:", params.headline);
 
-  const base64Raw = params.imageData.replace(/^data:image\/[\w+]+;base64,/, "");
-  fs.writeFileSync(imgPath, Buffer.from(base64Raw, "base64"));
-  console.log("[video] Image written:", fs.statSync(imgPath).size, "bytes");
+  // Write all 3 scene images to disk
+  const imgPaths = params.images.map((imgData, i) => {
+    const p = path.join(os.tmpdir(), `ad_img_${id}_s${i+1}.png`);
+    const raw = imgData.replace(/^data:image\/[\w+]+;base64,/, "");
+    fs.writeFileSync(p, Buffer.from(raw, "base64"));
+    return p;
+  });
+  const [img1Path, img2Path, img3Path] = imgPaths;
+  console.log("[video] 3 distinct scene images written to disk");
 
   const hex   = params.primaryColor.replace("#", "").padEnd(6, "0").slice(0, 6);
   const brand = ffText(params.brandName);
@@ -179,15 +196,12 @@ async function generateAdVideo(params: {
   const cta   = ffText(params.cta);
 
   // ─────────────────────────────────────────────────────────────────────────
-  // 3 SCENES · 15 seconds · 25 fps — 3 parallel FFmpeg processes, each gets
-  // a different colour grade, zoom/pan direction, and text overlay.
+  // 3 SCENES · 15 seconds · 25 fps
+  // Each scene uses a DIFFERENT AI-generated image for real visual variety:
   //
-  //  Scene 1  0–5 s  : BRAND REVEAL   — warm golden grade, zoom IN  (540p zoompan→1080p)
-  //  Scene 2  5–10 s : PRODUCT FOCUS  — near-B&W dramatic, pan L→R  (crop, fast)
-  //  Scene 3  10–15 s: CTA FINALE     — brand colour dominant, zoom OUT (540p zoompan→1080p)
-  //
-  // Running 3 separate processes in parallel avoids filter_complex contention.
-  // A final stream-copy concat joins them without re-encoding.
+  //  Scene 1  0–5 s  : PRODUCT HERO   — studio shot, zoom IN, warm grade
+  //  Scene 2  5–10 s : LIFESTYLE      — in-use shot, pan L→R, natural grade
+  //  Scene 3  10–15 s: CTA FINALE     — graphic close, zoom OUT, brand colour
   // ─────────────────────────────────────────────────────────────────────────
 
   const s1Path   = path.join(os.tmpdir(), `s1_${id}.mp4`);
@@ -197,72 +211,63 @@ async function generateAdVideo(params: {
 
   const ENC = ["-r","25","-c:v","libx264","-pix_fmt","yuv420p","-preset","fast","-crf","26"];
 
-  // ── SCENE 1: BRAND REVEAL — warm golden grade, zoom IN ────────────────
-  // zoompan at 540p (4× faster than 1080p), scale back up after motion.
-  // crop x/y animate WITHOUT eval=frame — they are per-frame by default.
+  // ── SCENE 1: PRODUCT HERO — warm golden grade, zoom IN ────────────────
   const scene1vf = [
     `scale=540:540:force_original_aspect_ratio=increase,crop=540:540`,
     `zoompan=z='min(1+0.00055*on,1.18)':d=125:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=540x540:fps=25`,
     `scale=1080:1080`,
     `eq=contrast=1.08:saturation=1.35:brightness=0.02:gamma=0.96`,
     `vignette=PI/4.5`,
-    `drawbox=x=0:y=0:w=iw:h=ih:color=0xFF8C00@0.08:t=fill`,
-    `drawbox=x=0:y=ih*0.60:w=iw:h=ih*0.40:color=0x${hex}@0.78:t=fill`,
-    `drawbox=x=0:y=0:w=iw:h=ih*0.07:color=black@0.55:t=fill`,
-    `drawtext=fontfile=${FONT_BOLD}:text='${brand}':x=(w-tw)/2:y=(h-th)/2-26:fontsize=84:fontcolor=white:shadowcolor=black@0.85:shadowx=4:shadowy=4:alpha='if(lt(t,0.7),t/0.7,1)'`,
-    `drawtext=fontfile=${FONT_BOLD}:text='${hl}':x=(w-tw)/2:y=(h-th)/2+72:fontsize=33:fontcolor=white@0.90:shadowcolor=black@0.65:shadowx=2:shadowy=2:alpha='if(lt(t,1.3),0,if(lt(t,2.1),(t-1.3)/0.8,1))'`,
+    `drawbox=x=0:y=ih*0.72:w=iw:h=ih*0.28:color=black@0.72:t=fill`,
+    `drawtext=fontfile=${FONT_BOLD}:text='${brand}':x=(w-tw)/2:y=h*0.76:fontsize=72:fontcolor=white:shadowcolor=black@0.85:shadowx=4:shadowy=4:alpha='if(lt(t,0.6),t/0.6,1)'`,
+    `drawtext=fontfile=${FONT_BOLD}:text='${hl}':x=(w-tw)/2:y=h*0.87:fontsize=30:fontcolor=white@0.90:shadowcolor=black@0.65:shadowx=2:shadowy=2:alpha='if(lt(t,1.2),0,if(lt(t,2.0),(t-1.2)/0.8,1))'`,
     `fade=t=in:st=0:d=0.5,fade=t=out:st=4.5:d=0.5`,
   ].join(",");
 
-  // ── SCENE 2: PRODUCT FOCUS — near-B&W dramatic grade, pan L→R ────────
-  // crop x/y support the `n` variable (frame count) natively — no eval=frame needed.
-  // Scale 1440→crop 1080 window pans from x=180 to x=300 over 124 frames.
+  // ── SCENE 2: LIFESTYLE — natural grade, pan L→R ──────────────────────
   const scene2vf = [
     `scale=1440:1440:force_original_aspect_ratio=increase,crop=1440:1440`,
     `crop=w=1080:h=1080:x='180+120*n/124':y='180'`,
-    `eq=contrast=1.38:saturation=0.16:brightness=-0.06:gamma=0.87`,
-    `vignette=PI/3.2`,
-    `drawbox=x=0:y=0:w=iw:h=ih:color=0x000820@0.14:t=fill`,
-    `drawbox=x=0:y=ih*0.60:w=iw:h=ih*0.40:color=0x${hex}@0.82:t=fill`,
-    `drawbox=x=0:y=0:w=iw:h=ih*0.07:color=black@0.55:t=fill`,
-    `drawtext=fontfile=${FONT_BOLD}:text='${hl}':x=(w-tw)/2:y='h*0.67+max(0,h*0.33+100)*(1-min(t/0.8,1))':fontsize=52:fontcolor=white:shadowcolor=black@0.90:shadowx=3:shadowy=3:alpha='if(lt(t,0.3),0,if(lt(t,1.1),(t-0.3)/0.8,1))'`,
-    `drawtext=fontfile=${FONT_BOLD}:text='  ${cta}  ':x=(w-tw)/2:y=h*0.82:fontsize=46:fontcolor=white:box=1:boxcolor=white@0.20:boxborderw=26:shadowcolor=black@0.55:shadowx=2:shadowy=2:alpha='if(lt(t,2.0),0,if(lt(t,3.0),(t-2.0)/1.0,1))'`,
+    `eq=contrast=1.18:saturation=1.10:brightness=0.01:gamma=0.95`,
+    `vignette=PI/4.0`,
+    `drawbox=x=0:y=ih*0.65:w=iw:h=ih*0.35:color=0x${hex}@0.85:t=fill`,
+    `drawtext=fontfile=${FONT_BOLD}:text='${hl}':x=(w-tw)/2:y='h*0.69+max(0,h*0.15)*(1-min(t/0.8,1))':fontsize=46:fontcolor=white:shadowcolor=black@0.90:shadowx=3:shadowy=3:alpha='if(lt(t,0.3),0,if(lt(t,1.1),(t-0.3)/0.8,1))'`,
+    `drawtext=fontfile=${FONT_BOLD}:text='  ${cta}  ':x=(w-tw)/2:y=h*0.84:fontsize=40:fontcolor=white:box=1:boxcolor=white@0.20:boxborderw=22:shadowcolor=black@0.55:shadowx=2:shadowy=2:alpha='if(lt(t,1.8),0,if(lt(t,2.8),(t-1.8)/1.0,1))'`,
     `fade=t=in:st=0:d=0.5,fade=t=out:st=4.5:d=0.5`,
   ].join(",");
 
   // ── SCENE 3: CTA FINALE — brand colour dominant, zoom OUT ─────────────
-  // zoompan at 540p zooms out (z decreases), revealing more of the image.
   const scene3vf = [
     `scale=540:540:force_original_aspect_ratio=increase,crop=540:540`,
     `zoompan=z='max(1.18-0.00144*on,1.0)':d=125:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=540x540:fps=25`,
     `scale=1080:1080`,
-    `eq=contrast=1.10:saturation=1.22:brightness=-0.02:gamma=0.93`,
+    `eq=contrast=1.12:saturation=1.28:brightness=-0.02:gamma=0.93`,
     `vignette=PI/4.5`,
-    `drawbox=x=0:y=0:w=iw:h=ih*0.52:color=black@0.50:t=fill`,
-    `drawbox=x=0:y=ih*0.48:w=iw:h=ih*0.52:color=0x${hex}@0.92:t=fill`,
-    `drawtext=fontfile=${FONT_BOLD}:text='${brand}':x=(w-tw)/2:y=h*0.12:fontsize=68:fontcolor=white:shadowcolor=black@0.85:shadowx=3:shadowy=3:alpha='if(lt(t,0.4),0,if(lt(t,1.1),(t-0.4)/0.7,1))'`,
-    `drawtext=fontfile=${FONT_BOLD}:text='${hl}':x=(w-tw)/2:y=h*0.26:fontsize=36:fontcolor=white@0.88:shadowcolor=black@0.70:shadowx=2:shadowy=2:alpha='if(lt(t,1.0),0,if(lt(t,1.7),(t-1.0)/0.7,1))'`,
-    `drawtext=fontfile=${FONT_BOLD}:text='  ${cta}  ':x=(w-tw)/2:y=h*0.60:fontsize=56:fontcolor=white:box=1:boxcolor=white@0.22:boxborderw=32:shadowcolor=black@0.5:shadowx=2:shadowy=2:alpha='if(lt(t,1.6),0,if(lt(t,2.4),(t-1.6)/0.8,1))'`,
+    `drawbox=x=0:y=0:w=iw:h=ih:color=0x${hex}@0.55:t=fill`,
+    `drawbox=x=iw*0.08:y=ih*0.20:w=iw*0.84:h=ih*0.60:color=black@0.65:t=fill`,
+    `drawtext=fontfile=${FONT_BOLD}:text='${brand}':x=(w-tw)/2:y=h*0.26:fontsize=64:fontcolor=white:shadowcolor=black@0.85:shadowx=3:shadowy=3:alpha='if(lt(t,0.4),0,if(lt(t,1.1),(t-0.4)/0.7,1))'`,
+    `drawtext=fontfile=${FONT_BOLD}:text='${hl}':x=(w-tw)/2:y=h*0.42:fontsize=34:fontcolor=white@0.90:shadowcolor=black@0.70:shadowx=2:shadowy=2:alpha='if(lt(t,0.9),0,if(lt(t,1.6),(t-0.9)/0.7,1))'`,
+    `drawtext=fontfile=${FONT_BOLD}:text='  ${cta}  ':x=(w-tw)/2:y=h*0.59:fontsize=52:fontcolor=white:box=1:boxcolor=0x${hex}@0.90:boxborderw=28:shadowcolor=black@0.5:shadowx=2:shadowy=2:alpha='if(lt(t,1.5),0,if(lt(t,2.3),(t-1.5)/0.8,1))'`,
     `fade=t=in:st=0:d=0.5,fade=t=out:st=4.5:d=0.5`,
   ].join(",");
 
   try {
-    console.log("[video] Generating 3 scenes in parallel...");
+    console.log("[video] Rendering 3 unique-image scenes in parallel...");
 
-    // Run all 3 scene renders simultaneously
+    // Each scene uses its OWN unique AI-generated image
     await Promise.all([
       execFileAsync(FFMPEG_BIN, [
-        "-y", "-loop", "1", "-t", "5", "-i", imgPath,
+        "-y", "-loop", "1", "-t", "5", "-i", img1Path,
         "-vf", scene1vf, ...ENC, s1Path,
       ], { timeout: 240_000, maxBuffer: 50 * 1024 * 1024 }),
 
       execFileAsync(FFMPEG_BIN, [
-        "-y", "-loop", "1", "-t", "5", "-i", imgPath,
+        "-y", "-loop", "1", "-t", "5", "-i", img2Path,
         "-vf", scene2vf, ...ENC, s2Path,
-      ], { timeout: 60_000, maxBuffer: 50 * 1024 * 1024 }),
+      ], { timeout: 120_000, maxBuffer: 50 * 1024 * 1024 }),
 
       execFileAsync(FFMPEG_BIN, [
-        "-y", "-loop", "1", "-t", "5", "-i", imgPath,
+        "-y", "-loop", "1", "-t", "5", "-i", img3Path,
         "-vf", scene3vf, ...ENC, s3Path,
       ], { timeout: 240_000, maxBuffer: 50 * 1024 * 1024 }),
     ]);
@@ -283,7 +288,7 @@ async function generateAdVideo(params: {
     console.error("[video] stderr:", err?.stderr?.slice?.(0, 1200) ?? "none");
     throw err;
   } finally {
-    for (const f of [imgPath, s1Path, s2Path, s3Path, listPath]) {
+    for (const f of [...imgPaths, s1Path, s2Path, s3Path, listPath]) {
       try { fs.unlinkSync(f); } catch {}
     }
   }
@@ -534,8 +539,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           });
 
           if (isVideoAI) {
-            // Step 1: Generate AI ad image
-            const imageData = await generateAdImage({
+            // Step 1: Generate 3 DISTINCT AI images in parallel (hero / lifestyle / cta)
+            const sceneParams = {
               brandName: brand.name,
               brandIndustry: brand.industry,
               primaryColor: brand.primaryColor,
@@ -549,10 +554,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
               platform: input.platform,
               formatName: input.formatName,
               goal: input.goal,
-            });
-            // Step 2: Encode the image into a real MP4 video with FFmpeg
+            };
+            const [heroImage, lifestyleImage, ctaImage] = await Promise.all([
+              generateAdImage({ ...sceneParams, scene: "hero" }),
+              generateAdImage({ ...sceneParams, scene: "lifestyle" }),
+              generateAdImage({ ...sceneParams, scene: "cta" }),
+            ]);
+            // Step 2: Stitch 3 unique images into a real 15-second MP4
             const videoUrl = await generateAdVideo({
-              imageData,
+              images: [heroImage, lifestyleImage, ctaImage],
               headline: adCopy.headline,
               cta: adCopy.cta,
               primaryColor: brand.primaryColor,
@@ -567,7 +577,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             });
             await storage.updateCreative(creative.id, {
               adCopy: adCopy as any,
-              imageData,
+              imageData: heroImage,
               videoUrl,
               status: "ready",
               performanceScore: score,

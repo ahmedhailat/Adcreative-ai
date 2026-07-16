@@ -452,16 +452,19 @@ export default function Studio() {
                   </div>
                   <div className="text-center">
                     <p className="font-bold text-sm">{t.studio.generateAiVideo}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">Real MP4 · Ken Burns</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">3 AI scenes · Real MP4</p>
                   </div>
                   {mediaMode === "video-ai" && <CheckCircle2 className="w-4 h-4 text-indigo-500" />}
                 </button>
               </div>
 
               {mediaMode === "video-ai" && (
-                <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-indigo-500/10 border border-indigo-500/20">
-                  <Sparkles className="w-4 h-4 text-indigo-400 shrink-0" />
-                  <p className="text-xs text-indigo-300">AI generates a professional ad image → FFmpeg renders it to a real 9-second MP4 with zoom animation + text overlays</p>
+                <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20">
+                  <Film className="w-4 h-4 text-indigo-400 shrink-0" />
+                  <div>
+                    <p className="text-xs font-semibold text-indigo-300 mb-0.5">3 unique AI-generated scenes → real 15-second MP4</p>
+                    <p className="text-[11px] text-indigo-300/60">Scene 1: Product Hero · Scene 2: Lifestyle Shot · Scene 3: CTA Finale</p>
+                  </div>
                 </div>
               )}
             </div>
