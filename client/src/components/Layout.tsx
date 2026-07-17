@@ -15,7 +15,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import {
   LayoutDashboard, Palette, Wand2, Images, LogOut, ChevronDown, User,
   Languages, Check, Crown, Zap, Link2, BarChart3, MessageSquare, Bot,
-  Video, Rocket, Settings2,
+  Video, Rocket, Settings2, UserCircle2,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useLang, type Lang } from "@/contexts/LangContext";
@@ -136,6 +136,7 @@ const navColors: Record<string, string> = {
   "/smart-rules": "text-rose-500 bg-rose-500/10",
   "/ugc": "text-purple-500 bg-purple-500/10",
   "/bulk-launch": "text-sky-500 bg-sky-500/10",
+  "/avatar-studio": "text-fuchsia-500 bg-fuchsia-500/10",
 };
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -160,6 +161,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     { title: t.nav.smartRules, url: "/smart-rules", icon: Settings2 },
     { title: t.nav.ugc, url: "/ugc", icon: Video },
     { title: t.nav.bulkLaunch, url: "/bulk-launch", icon: Rocket },
+    { title: t.nav.avatarStudio, url: "/avatar-studio", icon: UserCircle2 },
   ];
 
   return (

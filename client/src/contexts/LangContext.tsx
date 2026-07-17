@@ -18,6 +18,7 @@ const translations = {
       smartRules: "Smart Rules",
       ugc: "UGC Generator",
       bulkLaunch: "Bulk Launch",
+      avatarStudio: "Avatar Studio",
       aiTools: "AI Tools",
     },
     layout: {
@@ -357,6 +358,7 @@ const translations = {
       smartRules: "القواعد الذكية",
       ugc: "مولّد UGC",
       bulkLaunch: "الإطلاق الجماعي",
+      avatarStudio: "استوديو الأفاتار",
       aiTools: "أدوات الذكاء الاصطناعي",
     },
     layout: {

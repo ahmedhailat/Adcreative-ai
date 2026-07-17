@@ -19,6 +19,7 @@ import Copilot from "@/pages/Copilot";
 import SmartRules from "@/pages/SmartRules";
 import UGC from "@/pages/UGC";
 import BulkLaunch from "@/pages/BulkLaunch";
+import AvatarStudio from "@/pages/AvatarStudio";
 import Login from "@/pages/Login";
 import { useAuth } from "@/hooks/use-auth";
 import { LangProvider, useLang } from "@/contexts/LangContext";
@@ -64,6 +65,7 @@ function ProtectedRouter() {
         <Route path="/smart-rules" component={SmartRules} />
         <Route path="/ugc" component={UGC} />
         <Route path="/bulk-launch" component={BulkLaunch} />
+        <Route path="/avatar-studio" component={AvatarStudio} />
         <Route path="/pricing" component={Pricing} />
         <Route component={NotFound} />
       </Switch>
