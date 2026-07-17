@@ -22,9 +22,10 @@ const FFMPEG_BIN  = "/nix/store/inqkj79vydizl6ja0d8af99qlxbmyr84-replit-runtime-
 const FONT_BOLD   = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
 
 // Persistent video storage — served via /api/video/:filename
-const VIDEO_DIR  = "/tmp/ad_videos";
-const UPLOAD_DIR = "/tmp/uploads";
-for (const d of [VIDEO_DIR, UPLOAD_DIR]) {
+const VIDEO_DIR         = "/tmp/ad_videos";
+const UPLOAD_DIR        = "/tmp/uploads";
+const AVATAR_UPLOAD_DIR = "/tmp/avatar-inputs";
+for (const d of [VIDEO_DIR, UPLOAD_DIR, AVATAR_UPLOAD_DIR]) {
   if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
 }
 
@@ -39,6 +40,20 @@ const upload = multer({
       cb(null, true);
     } else {
       cb(new Error("Only video files are allowed"));
+    }
+  },
+});
+
+// Multer for avatar inputs — accepts images + videos, saves to AVATAR_UPLOAD_DIR
+const avatarUpload = multer({
+  dest: AVATAR_UPLOAD_DIR,
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
+  fileFilter: (_req, file, cb) => {
+    const allowed = ["image/jpeg", "image/png", "video/mp4", "video/quicktime", "video/mov"];
+    if (allowed.includes(file.mimetype) || file.mimetype.startsWith("image/") || file.mimetype.startsWith("video/")) {
+      cb(null, true);
+    } else {
+      cb(new Error("Only JPG, PNG, MP4, or MOV files are allowed"));
     }
   },
 });
@@ -447,6 +462,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const hashedPassword = await bcrypt.hash(password, 12);
       const user = await storage.createUser({ name, email, password: hashedPassword });
+
+      // Seed 3 free credits for every new user
+      await db.execute(sql`
+        INSERT INTO user_credits (user_id, balance)
+        VALUES (${user.id}, 3)
+        ON CONFLICT (user_id) DO NOTHING
+      `);
 
       req.session.userId = user.id;
       await new Promise<void>((resolve, reject) => req.session.save((err) => err ? reject(err) : resolve()));
@@ -959,6 +981,24 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       platform TEXT NOT NULL DEFAULT 'all', condition TEXT NOT NULL, threshold TEXT NOT NULL,
       action TEXT NOT NULL, action_value TEXT, is_active BOOLEAN NOT NULL DEFAULT TRUE,
       triggered_count INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMP DEFAULT NOW())`);
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS user_credits (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+      balance INTEGER NOT NULL DEFAULT 3,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`);
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS avatar_jobs (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'pending',
+      input_image_url TEXT NOT NULL,
+      input_video_url TEXT NOT NULL,
+      output_video_url TEXT,
+      error_message TEXT,
+      credits_charged INTEGER NOT NULL DEFAULT 1,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )`);
     console.log("[migrations] New tables ready");
   } catch (e) {
     console.error("[migrations] Error:", e);
@@ -1207,6 +1247,125 @@ ${productDesc ? `الوصف: ${productDesc}` : ""}
       });
     }
     res.json({ success: true, results, totalLaunched: creativeIds.length * platforms.length });
+  });
+
+  // ===== AVATAR STUDIO =====
+
+  // POST /api/avatar/upload-input — multer saves file, returns server-relative URL
+  app.post("/api/avatar/upload-input", avatarUpload.single("file"), async (req, res) => {
+    const userId = req.session?.userId;
+    if (!userId) return res.status(401).json({ message: "Not authenticated" });
+    if (!req.file) return res.status(400).json({ message: "No file provided" });
+
+    const type = (req.query.type as string) || (req.body?.type as string) || "file";
+    const uuid = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const ext = path.extname(req.file.originalname).toLowerCase() || (type === "image" ? ".jpg" : ".mp4");
+    const userDir = path.join(AVATAR_UPLOAD_DIR, String(userId));
+    if (!fs.existsSync(userDir)) fs.mkdirSync(userDir, { recursive: true });
+
+    const filename = `${uuid}${ext}`;
+    const dest = path.join(userDir, filename);
+    fs.renameSync(req.file.path, dest);
+
+    const url = `/api/avatar/file/${userId}/${filename}`;
+    res.json({ url });
+  });
+
+  // GET /api/avatar/file/:userId/:filename — auth-protected file serving
+  app.get("/api/avatar/file/:userId/:filename", (req, res) => {
+    const sessionUserId = req.session?.userId;
+    if (!sessionUserId) return res.status(401).json({ message: "Not authenticated" });
+    if (String(sessionUserId) !== req.params.userId) return res.status(403).json({ message: "Forbidden" });
+
+    const filePath = path.join(AVATAR_UPLOAD_DIR, req.params.userId, req.params.filename);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ message: "File not found" });
+    res.sendFile(filePath);
+  });
+
+  // GET /api/avatar/credits — returns the authenticated user's credit balance
+  app.get("/api/avatar/credits", async (req, res) => {
+    const userId = req.session?.userId;
+    if (!userId) return res.status(401).json({ message: "Not authenticated" });
+    try {
+      const rows = await db.execute(sql`
+        SELECT balance FROM user_credits WHERE user_id = ${userId}
+      `);
+      const balance = (rows.rows[0] as any)?.balance ?? 0;
+      res.json({ balance: Number(balance) });
+    } catch {
+      res.json({ balance: 0 });
+    }
+  });
+
+  // POST /api/avatar/create-job — checks credits, inserts job (no deduction yet)
+  app.post("/api/avatar/create-job", async (req, res) => {
+    const userId = req.session?.userId;
+    if (!userId) return res.status(401).json({ message: "Not authenticated" });
+
+    const schema = z.object({
+      inputImageUrl: z.string().min(1),
+      inputVideoUrl: z.string().min(1),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0].message });
+    const { inputImageUrl, inputVideoUrl } = parsed.data;
+
+    try {
+      // Ensure credit row exists (for users created before this feature)
+      await db.execute(sql`
+        INSERT INTO user_credits (user_id, balance)
+        VALUES (${userId}, 3)
+        ON CONFLICT (user_id) DO NOTHING
+      `);
+
+      const creditRows = await db.execute(sql`
+        SELECT balance FROM user_credits WHERE user_id = ${userId}
+      `);
+      const balance = Number((creditRows.rows[0] as any)?.balance ?? 0);
+      if (balance < 1) {
+        return res.status(402).json({ message: "Insufficient credits" });
+      }
+
+      const jobRows = await db.execute(sql`
+        INSERT INTO avatar_jobs (user_id, status, input_image_url, input_video_url, credits_charged)
+        VALUES (${userId}, 'pending', ${inputImageUrl}, ${inputVideoUrl}, 1)
+        RETURNING id
+      `);
+      const jobId = (jobRows.rows[0] as any)?.id;
+      res.status(201).json({ job_id: Number(jobId) });
+    } catch (e) {
+      console.error("[avatar] create-job error:", e);
+      res.status(500).json({ message: "Failed to create job" });
+    }
+  });
+
+  // GET /api/avatar/job/:id — returns job (user-scoped)
+  app.get("/api/avatar/job/:id", async (req, res) => {
+    const userId = req.session?.userId;
+    if (!userId) return res.status(401).json({ message: "Not authenticated" });
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ message: "Invalid job id" });
+
+    try {
+      const rows = await db.execute(sql`
+        SELECT id, status, output_video_url, error_message, created_at, updated_at
+        FROM avatar_jobs
+        WHERE id = ${id} AND user_id = ${userId}
+      `);
+      if (!rows.rows.length) return res.status(404).json({ message: "Job not found" });
+      const job = rows.rows[0] as any;
+      res.json({
+        id: job.id,
+        status: job.status,
+        outputVideoUrl: job.output_video_url ?? null,
+        errorMessage: job.error_message ?? null,
+        createdAt: job.created_at,
+        updatedAt: job.updated_at,
+      });
+    } catch (e) {
+      console.error("[avatar] get-job error:", e);
+      res.status(500).json({ message: "Failed to fetch job" });
+    }
   });
 
   seedDatabase();

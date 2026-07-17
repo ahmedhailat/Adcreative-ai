@@ -52,6 +52,31 @@ export const creatives = pgTable("creatives", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// === AVATAR JOBS TABLE ===
+export const avatarJobs = pgTable("avatar_jobs", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").references(() => users.id).notNull(),
+  status: text("status").notNull().default("pending"),
+  inputImageUrl: text("input_image_url").notNull(),
+  inputVideoUrl: text("input_video_url").notNull(),
+  outputVideoUrl: text("output_video_url"),
+  errorMessage: text("error_message"),
+  creditsCharged: integer("credits_charged").notNull().default(1),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// === USER CREDITS TABLE ===
+export const userCredits = pgTable("user_credits", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").references(() => users.id).notNull().unique(),
+  balance: integer("balance").notNull().default(3),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type AvatarJob = typeof avatarJobs.$inferSelect;
+export type UserCredits = typeof userCredits.$inferSelect;
+
 // === AD ACCOUNTS TABLE ===
 export const adAccounts = pgTable("ad_accounts", {
   id: serial("id").primaryKey(),
