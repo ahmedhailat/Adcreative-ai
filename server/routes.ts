@@ -11,6 +11,7 @@ import { storage } from "./storage";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { TWILIO_CONFIGURED, getTwilioClient, TWILIO_FROM_SMS, TWILIO_FROM_WA } from "./twilioClient";
+import { replicate, LIVE_PORTRAIT_VERSION } from "./replicateClient";
 import { stripe } from "./stripeClient";
 import { handleStripeWebhook } from "./webhookHandlers";
 import { api } from "@shared/routes";
@@ -999,6 +1000,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )`);
+    await db.execute(sql`
+      ALTER TABLE avatar_jobs
+      ADD COLUMN IF NOT EXISTS replicate_prediction_id TEXT
+    `);
     console.log("[migrations] New tables ready");
   } catch (e) {
     console.error("[migrations] Error:", e);
@@ -1251,6 +1256,13 @@ ${productDesc ? `الوصف: ${productDesc}` : ""}
 
   // ===== AVATAR STUDIO =====
 
+  // Helper: convert /api/avatar/file/{userId}/{filename} → absolute fs path
+  function avatarUrlToPath(url: string): string {
+    const m = url.match(/\/api\/avatar\/file\/(\d+)\/(.+)/);
+    if (!m) throw new Error(`Cannot resolve avatar file path from URL: ${url}`);
+    return path.join(AVATAR_UPLOAD_DIR, m[1], m[2]);
+  }
+
   // POST /api/avatar/upload-input — multer saves file, returns server-relative URL
   app.post("/api/avatar/upload-input", avatarUpload.single("file"), async (req, res) => {
     const userId = req.session?.userId;
@@ -1297,7 +1309,7 @@ ${productDesc ? `الوصف: ${productDesc}` : ""}
     }
   });
 
-  // POST /api/avatar/create-job — checks credits, inserts job (no deduction yet)
+  // POST /api/avatar/create-job — checks credits, inserts job, kicks off Replicate
   app.post("/api/avatar/create-job", async (req, res) => {
     const userId = req.session?.userId;
     if (!userId) return res.status(401).json({ message: "Not authenticated" });
@@ -1311,7 +1323,7 @@ ${productDesc ? `الوصف: ${productDesc}` : ""}
     const { inputImageUrl, inputVideoUrl } = parsed.data;
 
     try {
-      // Ensure credit row exists (for users created before this feature)
+      // Ensure credit row exists for users created before this feature
       await db.execute(sql`
         INSERT INTO user_credits (user_id, balance)
         VALUES (${userId}, 3)
@@ -1326,20 +1338,67 @@ ${productDesc ? `الوصف: ${productDesc}` : ""}
         return res.status(402).json({ message: "Insufficient credits" });
       }
 
+      // Insert job as 'pending'
       const jobRows = await db.execute(sql`
         INSERT INTO avatar_jobs (user_id, status, input_image_url, input_video_url, credits_charged)
         VALUES (${userId}, 'pending', ${inputImageUrl}, ${inputVideoUrl}, 1)
         RETURNING id
       `);
-      const jobId = (jobRows.rows[0] as any)?.id;
-      res.status(201).json({ job_id: Number(jobId) });
+      const jobId = Number((jobRows.rows[0] as any)?.id);
+
+      // Respond immediately — Replicate call runs in background
+      res.status(201).json({ job_id: jobId });
+
+      // Background: start Replicate prediction
+      setImmediate(async () => {
+        try {
+          const imagePath = avatarUrlToPath(inputImageUrl);
+          const videoPath = avatarUrlToPath(inputVideoUrl);
+
+          if (!fs.existsSync(imagePath) || !fs.existsSync(videoPath)) {
+            throw new Error("Input files not found on server — they may have been deleted");
+          }
+
+          const imageBuffer = fs.readFileSync(imagePath);
+          const videoBuffer = fs.readFileSync(videoPath);
+          const imageBlob = new Blob([imageBuffer]);
+          const videoBlob  = new Blob([videoBuffer]);
+
+          console.log(`[avatar] Starting Replicate prediction for job ${jobId}…`);
+          const prediction = await replicate.predictions.create({
+            version: LIVE_PORTRAIT_VERSION,
+            input: {
+              face_image:    imageBlob,
+              driving_video: videoBlob,
+            },
+          });
+
+          await db.execute(sql`
+            UPDATE avatar_jobs
+            SET status = 'processing',
+                replicate_prediction_id = ${prediction.id},
+                updated_at = NOW()
+            WHERE id = ${jobId}
+          `);
+          console.log(`[avatar] Job ${jobId} → Replicate prediction ${prediction.id} started`);
+        } catch (err: any) {
+          console.error(`[avatar] Failed to start Replicate prediction for job ${jobId}:`, err?.message ?? err);
+          await db.execute(sql`
+            UPDATE avatar_jobs
+            SET status = 'failed',
+                error_message = ${"Replicate error: " + (err?.message ?? "Unknown error")},
+                updated_at = NOW()
+            WHERE id = ${jobId}
+          `).catch(() => {});
+        }
+      });
     } catch (e) {
       console.error("[avatar] create-job error:", e);
       res.status(500).json({ message: "Failed to create job" });
     }
   });
 
-  // GET /api/avatar/job/:id — returns job (user-scoped)
+  // GET /api/avatar/job/:id — returns job, polls Replicate if status is 'processing'
   app.get("/api/avatar/job/:id", async (req, res) => {
     const userId = req.session?.userId;
     if (!userId) return res.status(401).json({ message: "Not authenticated" });
@@ -1348,19 +1407,67 @@ ${productDesc ? `الوصف: ${productDesc}` : ""}
 
     try {
       const rows = await db.execute(sql`
-        SELECT id, status, output_video_url, error_message, created_at, updated_at
+        SELECT id, status, output_video_url, error_message,
+               replicate_prediction_id, created_at, updated_at
         FROM avatar_jobs
         WHERE id = ${id} AND user_id = ${userId}
       `);
       if (!rows.rows.length) return res.status(404).json({ message: "Job not found" });
-      const job = rows.rows[0] as any;
+      let job = rows.rows[0] as any;
+
+      // Poll Replicate when the job is in-flight
+      if (job.status === "processing" && job.replicate_prediction_id) {
+        try {
+          const prediction = await replicate.predictions.get(job.replicate_prediction_id);
+          console.log(`[avatar] Job ${id} — Replicate status: ${prediction.status}`);
+
+          if (prediction.status === "succeeded") {
+            // Output may be a string URL or an array — normalise
+            const outputUrl: string | null = Array.isArray(prediction.output)
+              ? prediction.output[0] ?? null
+              : (prediction.output as string | null) ?? null;
+
+            await db.execute(sql`
+              UPDATE avatar_jobs
+              SET status = 'done',
+                  output_video_url = ${outputUrl},
+                  updated_at = NOW()
+              WHERE id = ${id}
+            `);
+            // Deduct 1 credit on success
+            await db.execute(sql`
+              UPDATE user_credits
+              SET balance = GREATEST(balance - 1, 0)
+              WHERE user_id = ${userId}
+            `);
+            job = { ...job, status: "done", output_video_url: outputUrl };
+
+          } else if (prediction.status === "failed" || prediction.status === "canceled") {
+            const errMsg = (prediction as any).error ?? "Replicate generation failed";
+            await db.execute(sql`
+              UPDATE avatar_jobs
+              SET status = 'failed',
+                  error_message = ${errMsg},
+                  updated_at = NOW()
+              WHERE id = ${id}
+            `);
+            job = { ...job, status: "failed", error_message: errMsg };
+
+          }
+          // "starting" | "processing" → no DB update, just return current status
+        } catch (pollErr: any) {
+          console.error(`[avatar] Replicate poll error for job ${id}:`, pollErr?.message ?? pollErr);
+          // Don't fail the request — return current DB state
+        }
+      }
+
       res.json({
-        id: job.id,
-        status: job.status,
-        outputVideoUrl: job.output_video_url ?? null,
-        errorMessage: job.error_message ?? null,
-        createdAt: job.created_at,
-        updatedAt: job.updated_at,
+        id:             job.id,
+        status:         job.status,
+        outputVideoUrl: job.output_video_url  ?? null,
+        errorMessage:   job.error_message     ?? null,
+        createdAt:      job.created_at,
+        updatedAt:      job.updated_at,
       });
     } catch (e) {
       console.error("[avatar] get-job error:", e);
