@@ -12,6 +12,7 @@ import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { TWILIO_CONFIGURED, getTwilioClient, TWILIO_FROM_SMS, TWILIO_FROM_WA } from "./twilioClient";
 import { replicate, LIVE_PORTRAIT_VERSION } from "./replicateClient";
+import { DID_CONFIGURED, uploadImageToDID, uploadDriverToDID, createDIDClip, getDIDClip } from "./didClient";
 import { stripe } from "./stripeClient";
 import { handleStripeWebhook } from "./webhookHandlers";
 import { api } from "@shared/routes";
@@ -1004,6 +1005,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       ALTER TABLE avatar_jobs
       ADD COLUMN IF NOT EXISTS replicate_prediction_id TEXT
     `);
+    await db.execute(sql`
+      ALTER TABLE avatar_jobs
+      ADD COLUMN IF NOT EXISTS provider TEXT DEFAULT 'did'
+    `);
     console.log("[migrations] New tables ready");
   } catch (e) {
     console.error("[migrations] Error:", e);
@@ -1346,11 +1351,12 @@ ${productDesc ? `الوصف: ${productDesc}` : ""}
       `);
       const jobId = Number((jobRows.rows[0] as any)?.id);
 
-      // Respond immediately — Replicate call runs in background
+      // Respond immediately — AI call runs in background
       res.status(201).json({ job_id: jobId });
 
-      // Background: start Replicate prediction
+      // Background: start generation via D-ID (preferred) or Replicate (fallback)
       setImmediate(async () => {
+        const provider = DID_CONFIGURED ? "did" : "replicate";
         try {
           const imagePath = avatarUrlToPath(inputImageUrl);
           const videoPath = avatarUrlToPath(inputVideoUrl);
@@ -1361,32 +1367,53 @@ ${productDesc ? `الوصف: ${productDesc}` : ""}
 
           const imageBuffer = fs.readFileSync(imagePath);
           const videoBuffer = fs.readFileSync(videoPath);
-          const imageBlob = new Blob([imageBuffer]);
-          const videoBlob  = new Blob([videoBuffer]);
 
-          console.log(`[avatar] Starting Replicate prediction for job ${jobId}…`);
-          const prediction = await replicate.predictions.create({
-            version: LIVE_PORTRAIT_VERSION,
-            input: {
-              face_image:    imageBlob,
-              driving_video: videoBlob,
-            },
-          });
+          let predictionId: string;
+
+          if (provider === "did") {
+            // ── D-ID Clips ─────────────────────────────────────────────────
+            console.log(`[avatar] Job ${jobId} → using D-ID Clips`);
+            const imageExt  = path.extname(imagePath).toLowerCase() || ".jpg";
+            const videoExt  = path.extname(videoPath).toLowerCase() || ".mp4";
+            const imageMime = imageExt === ".png" ? "image/png" : "image/jpeg";
+            const videoMime = videoExt === ".mov" ? "video/quicktime" : "video/mp4";
+
+            const [didImageUrl, didDriverUrl] = await Promise.all([
+              uploadImageToDID(imageBuffer, `face${imageExt}`, imageMime),
+              uploadDriverToDID(videoBuffer, `driver${videoExt}`, videoMime),
+            ]);
+
+            predictionId = await createDIDClip(didImageUrl, didDriverUrl);
+          } else {
+            // ── Replicate LivePortrait ──────────────────────────────────────
+            console.log(`[avatar] Job ${jobId} → using Replicate LivePortrait`);
+            const imageBlob = new Blob([imageBuffer]);
+            const videoBlob = new Blob([videoBuffer]);
+
+            const prediction = await replicate.predictions.create({
+              version: LIVE_PORTRAIT_VERSION,
+              input: { face_image: imageBlob, driving_video: videoBlob },
+            });
+            predictionId = prediction.id;
+          }
 
           await db.execute(sql`
             UPDATE avatar_jobs
             SET status = 'processing',
-                replicate_prediction_id = ${prediction.id},
+                replicate_prediction_id = ${predictionId},
+                provider = ${provider},
                 updated_at = NOW()
             WHERE id = ${jobId}
           `);
-          console.log(`[avatar] Job ${jobId} → Replicate prediction ${prediction.id} started`);
+          console.log(`[avatar] Job ${jobId} → ${provider} prediction ${predictionId} started`);
+
         } catch (err: any) {
-          console.error(`[avatar] Failed to start Replicate prediction for job ${jobId}:`, err?.message ?? err);
+          const msg = `${provider === "did" ? "D-ID" : "Replicate"} error: ${err?.message ?? "Unknown error"}`;
+          console.error(`[avatar] Failed to start ${provider} prediction for job ${jobId}:`, err?.message ?? err);
           await db.execute(sql`
             UPDATE avatar_jobs
             SET status = 'failed',
-                error_message = ${"Replicate error: " + (err?.message ?? "Unknown error")},
+                error_message = ${msg},
                 updated_at = NOW()
             WHERE id = ${jobId}
           `).catch(() => {});
@@ -1408,56 +1435,75 @@ ${productDesc ? `الوصف: ${productDesc}` : ""}
     try {
       const rows = await db.execute(sql`
         SELECT id, status, output_video_url, error_message,
-               replicate_prediction_id, created_at, updated_at
+               replicate_prediction_id, provider, created_at, updated_at
         FROM avatar_jobs
         WHERE id = ${id} AND user_id = ${userId}
       `);
       if (!rows.rows.length) return res.status(404).json({ message: "Job not found" });
       let job = rows.rows[0] as any;
 
-      // Poll Replicate when the job is in-flight
+      // Poll the AI provider when the job is in-flight
       if (job.status === "processing" && job.replicate_prediction_id) {
+        const jobProvider: string = job.provider ?? "replicate";
         try {
-          const prediction = await replicate.predictions.get(job.replicate_prediction_id);
-          console.log(`[avatar] Job ${id} — Replicate status: ${prediction.status}`);
+          let finalStatus = "";
+          let outputUrl: string | null = null;
+          let errMsg: string | null = null;
 
-          if (prediction.status === "succeeded") {
-            // Output may be a string URL or an array — normalise
-            const outputUrl: string | null = Array.isArray(prediction.output)
-              ? prediction.output[0] ?? null
-              : (prediction.output as string | null) ?? null;
+          if (jobProvider === "did") {
+            // ── D-ID polling ───────────────────────────────────────────────
+            const clip = await getDIDClip(job.replicate_prediction_id);
+            console.log(`[avatar] Job ${id} — D-ID status: ${clip.status}`);
 
+            if (clip.status === "done") {
+              finalStatus = "done";
+              outputUrl   = clip.resultUrl;
+            } else if (clip.status === "error") {
+              finalStatus = "failed";
+              errMsg      = clip.error ?? "D-ID generation failed";
+            }
+            // "created" | "started" → still processing, no update
+
+          } else {
+            // ── Replicate polling ──────────────────────────────────────────
+            const prediction = await replicate.predictions.get(job.replicate_prediction_id);
+            console.log(`[avatar] Job ${id} — Replicate status: ${prediction.status}`);
+
+            if (prediction.status === "succeeded") {
+              finalStatus = "done";
+              outputUrl   = Array.isArray(prediction.output)
+                ? (prediction.output[0] ?? null)
+                : ((prediction.output as string | null) ?? null);
+            } else if (prediction.status === "failed" || prediction.status === "canceled") {
+              finalStatus = "failed";
+              errMsg      = (prediction as any).error ?? "Replicate generation failed";
+            }
+            // "starting" | "processing" → still processing, no update
+          }
+
+          if (finalStatus === "done") {
             await db.execute(sql`
               UPDATE avatar_jobs
-              SET status = 'done',
-                  output_video_url = ${outputUrl},
-                  updated_at = NOW()
+              SET status = 'done', output_video_url = ${outputUrl}, updated_at = NOW()
               WHERE id = ${id}
             `);
-            // Deduct 1 credit on success
             await db.execute(sql`
-              UPDATE user_credits
-              SET balance = GREATEST(balance - 1, 0)
-              WHERE user_id = ${userId}
+              UPDATE user_credits SET balance = GREATEST(balance - 1, 0) WHERE user_id = ${userId}
             `);
             job = { ...job, status: "done", output_video_url: outputUrl };
 
-          } else if (prediction.status === "failed" || prediction.status === "canceled") {
-            const errMsg = (prediction as any).error ?? "Replicate generation failed";
+          } else if (finalStatus === "failed") {
             await db.execute(sql`
               UPDATE avatar_jobs
-              SET status = 'failed',
-                  error_message = ${errMsg},
-                  updated_at = NOW()
+              SET status = 'failed', error_message = ${errMsg}, updated_at = NOW()
               WHERE id = ${id}
             `);
             job = { ...job, status: "failed", error_message: errMsg };
-
           }
-          // "starting" | "processing" → no DB update, just return current status
+
         } catch (pollErr: any) {
-          console.error(`[avatar] Replicate poll error for job ${id}:`, pollErr?.message ?? pollErr);
-          // Don't fail the request — return current DB state
+          console.error(`[avatar] ${jobProvider} poll error for job ${id}:`, pollErr?.message ?? pollErr);
+          // Don't fail the HTTP response — return current DB state
         }
       }
 
