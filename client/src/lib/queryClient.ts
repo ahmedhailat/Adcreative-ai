@@ -20,12 +20,21 @@ async function throwIfResNotOk(res: Response) {
   }
 }
 
+// When deployed to Vercel, VITE_API_URL points to the Render backend.
+// In development (or when not set), relative URLs are used.
+const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
+
+export function resolveUrl(url: string): string {
+  if (url.startsWith("http")) return url;
+  return `${API_BASE}${url}`;
+}
+
 export async function apiRequest(
   method: string,
   url: string,
   data?: unknown,
 ): Promise<any> {
-  const res = await fetch(url, {
+  const res = await fetch(resolveUrl(url), {
     method,
     headers: data ? { "Content-Type": "application/json" } : {},
     body: data ? JSON.stringify(data) : undefined,
@@ -45,7 +54,7 @@ export const getQueryFn: <T>(options: {
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
     const url = Array.isArray(queryKey) ? queryKey[0] : queryKey;
-    const res = await fetch(url as string, {
+    const res = await fetch(resolveUrl(url as string), {
       credentials: "include",
     });
 
