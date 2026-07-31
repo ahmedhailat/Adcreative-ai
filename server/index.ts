@@ -1,3 +1,4 @@
+import cors from "cors";
 import express, { type Request, Response, NextFunction } from "express";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
@@ -21,6 +22,15 @@ process.on("unhandledRejection", (reason) => {
 // ──────────────────────────────────────────────────────────────────────────
 
 const app = express();
+app.use(cors({
+  origin: [
+    "https://neonadai.onrender.com",
+    "https://adcreative-ai-api-server-nu.vercel.app",
+    "https://neonadai.com",
+    "https://www.neonadai.com"
+  ],
+  credentials: true,
+}));
 const httpServer = createServer(app);
 
 // Trust Replit's reverse proxy so req.secure is correct and secure cookies are sent
