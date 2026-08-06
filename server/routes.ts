@@ -782,6 +782,126 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // ===== SLIDESHOW GENERATOR =====
+  async function generateSlideshowVideo(imagePaths: string[]): Promise<string> {
+    const id      = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const outPath = path.join(VIDEO_DIR, `${id}.mp4`);
+    const n       = imagePaths.length;
+
+    const duration    = 3.0; // seconds each image is uniquely visible
+    const fadeDur     = 0.5; // crossfade duration
+    const inputDur    = duration + fadeDur; // each input slightly longer to allow overlap
+
+    // Inputs: loop each image
+    const inputArgs = imagePaths.flatMap(p => ["-loop", "1", "-t", String(inputDur), "-i", p]);
+
+    // Scale each to 1080×1080
+    const scaleFilters = imagePaths.map((_, i) =>
+      `[${i}:v]scale=1080:1080:force_original_aspect_ratio=increase,crop=1080:1080,setsar=1,fps=25[v${i}]`
+    );
+
+    // xfade chain (offset = i * (duration - fadeDur))
+    let xfadeFilters: string[] = [];
+    if (n > 1) {
+      let lastLabel = "[v0]";
+      for (let i = 1; i < n; i++) {
+        const offset   = i * (duration - fadeDur);
+        const outLabel = i === n - 1 ? "[out]" : `[xf${i}]`;
+        xfadeFilters.push(`${lastLabel}[v${i}]xfade=transition=fade:duration=${fadeDur}:offset=${offset}${outLabel}`);
+        lastLabel = `[xf${i}]`;
+      }
+    }
+
+    const filterComplex = [...scaleFilters, ...xfadeFilters].join(";");
+    const mapLabel      = n === 1 ? "[v0]" : "[out]";
+
+    console.log(`[slideshow] Building ${n}-image slideshow → ${id}.mp4`);
+    await execFileAsync(FFMPEG_BIN, [
+      "-y",
+      ...inputArgs,
+      "-filter_complex", filterComplex,
+      "-map", mapLabel,
+      "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "fast", "-crf", "26",
+      "-movflags", "+faststart",
+      outPath,
+    ], { timeout: 120_000, maxBuffer: 50 * 1024 * 1024 });
+
+    if (!fs.existsSync(outPath)) throw new Error("FFmpeg slideshow finished but output missing");
+    const size = fs.statSync(outPath).size;
+    console.log(`[slideshow] Done! ${id}.mp4 — ${(size / 1024).toFixed(0)} KB`);
+    return `/api/video/${id}.mp4`;
+  }
+
+  // ===== IMAGE SLIDESHOW → VIDEO =====
+  const imagesUpload = multer({
+    dest: UPLOAD_DIR,
+    limits: { fileSize: 20 * 1024 * 1024 }, // 20MB per image
+    fileFilter: (_req, file, cb) => {
+      if (file.mimetype.startsWith("image/")) cb(null, true);
+      else cb(new Error("Only image files are allowed"));
+    },
+  });
+
+  app.post("/api/creatives/upload-images-video", imagesUpload.array("images", 10), async (req, res) => {
+    try {
+      const files = req.files as Express.Multer.File[] | undefined;
+      if (!files || files.length === 0) {
+        return res.status(400).json({ message: "No image files uploaded" });
+      }
+
+      const {
+        brandId, title, platform, formatSize, formatName,
+        productName, productDescription, goal, targetAudience,
+      } = req.body;
+
+      if (!brandId || !platform || !formatSize || !productName || !productDescription || !goal) {
+        files.forEach(f => { try { fs.unlinkSync(f.path); } catch {} });
+        return res.status(400).json({ message: "Missing required fields" });
+      }
+
+      const adTitle = title || `${productName} – ${formatName || formatSize}`;
+
+      // Create a "generating" creative record immediately so the client can poll
+      const creative = await storage.createCreative({
+        brandId: Number(brandId),
+        title: adTitle,
+        platform,
+        formatSize,
+        formatName: formatName || formatSize,
+        productName,
+        productDescription,
+        targetAudience: targetAudience || null,
+        goal,
+        adCopy: null,
+        imageData: null,
+        videoUrl: null,
+        mediaType: "video",
+        status: "generating",
+        performanceScore: null,
+        isFavorite: false,
+      });
+
+      // Generate slideshow in background
+      (async () => {
+        const imagePaths = files.map(f => f.path);
+        try {
+          const videoUrl = await generateSlideshowVideo(imagePaths);
+          await storage.updateCreative(creative.id, { videoUrl, status: "ready" });
+        } catch (err: any) {
+          console.error("[slideshow] FFmpeg error:", err?.message);
+          await storage.updateCreative(creative.id, { status: "failed" });
+        } finally {
+          imagePaths.forEach(p => { try { fs.unlinkSync(p); } catch {} });
+        }
+      })();
+
+      res.status(201).json(creative);
+    } catch (err: any) {
+      console.error("Image slideshow upload failed:", err);
+      res.status(500).json({ message: err.message || "Slideshow generation failed" });
+    }
+  });
+
   // ===== VIDEO TEST ENDPOINT (cinematic 3-scene pipeline) =====
   app.get("/api/test-video", async (_req, res) => {
     try {

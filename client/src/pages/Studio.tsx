@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { useLocation, Link } from "wouter";
 import { AD_FORMATS, type GenerateCreativeInput } from "@shared/schema";
 import { useBrands } from "@/hooks/use-brands";
-import { useGenerateCreative, useCreative, useUploadVideo } from "@/hooks/use-creatives";
+import { useGenerateCreative, useCreative, useUploadVideo, useUploadImagesVideo } from "@/hooks/use-creatives";
 import { useLang } from "@/contexts/LangContext";
 import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,7 @@ import {
   ArrowRight, ArrowLeft, Loader2, CheckCircle2, AlertCircle, Wand2,
   Download, Sparkles, Library, Image as ImageIcon, Video, Upload,
   Crown, Zap, Film, Lock, Play, RefreshCw, Star, TrendingUp,
-  Layers, Target, Eye,
+  Layers, Target, Eye, User2, FileText, Images, X as XIcon, ExternalLink,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useToast } from "@/hooks/use-toast";
@@ -39,7 +39,7 @@ const PLATFORM_COLORS: Record<string, string> = {
   twitter: "#1da1f2",
 };
 
-type MediaMode = "image" | "video-upload" | "video-ai";
+type MediaMode = "image" | "video-upload" | "video-ai" | "video-images" | "video-avatar";
 
 const VIDEO_STEPS = [
   { icon: Wand2,   label: "Writing ad copy", labelAr: "كتابة النص الإعلاني" },
@@ -102,6 +102,7 @@ export default function Studio() {
   const { data: brands, isLoading: brandsLoading } = useBrands();
   const generateCreative = useGenerateCreative();
   const uploadVideo = useUploadVideo();
+  const uploadImagesVideo = useUploadImagesVideo();
 
   const [step, setStep] = useState(1);
   const [generatingId, setGeneratingId] = useState<number | null>(null);
@@ -113,6 +114,11 @@ export default function Studio() {
   const [isDragOver, setIsDragOver] = useState(false);
   const [progressStep, setProgressStep] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Image-slideshow state
+  const [imageFiles, setImageFiles] = useState<File[]>([]);
+  const [imagePreviews, setImagePreviews] = useState<string[]>([]);
+  const [isImageDragOver, setIsImageDragOver] = useState(false);
+  const imagesInputRef = useRef<HTMLInputElement>(null);
   const productNameRef = useRef<HTMLInputElement>(null);
   const productDescRef = useRef<HTMLTextAreaElement>(null);
 
@@ -135,6 +141,17 @@ export default function Studio() {
     }, interval);
     return () => clearInterval(timer);
   }, [step, generatingId, resultCreative?.status, mediaMode]);
+
+  const handleImageFilesSelect = useCallback((files: FileList | File[]) => {
+    const arr = Array.from(files).filter(f => f.type.startsWith("image/"));
+    if (!arr.length) {
+      toast({ title: "Invalid files", description: "Please upload image files (JPG, PNG, WEBP).", variant: "destructive" });
+      return;
+    }
+    const combined = [...imageFiles, ...arr].slice(0, 10);
+    setImageFiles(combined);
+    setImagePreviews(combined.map(f => URL.createObjectURL(f)));
+  }, [imageFiles, toast]);
 
   const handleVideoFileSelect = useCallback((file: File) => {
     if (!file.type.startsWith("video/")) {
@@ -166,6 +183,11 @@ export default function Studio() {
         toast({ title: t.studio.selectAdFormat, description: t.studio.selectAdFormatDesc, variant: "destructive" });
         return;
       }
+      // Avatar mode: go straight to Avatar Studio
+      if (mediaMode === "video-avatar") {
+        setLocation("/avatar-studio");
+        return;
+      }
     }
     if (step === 2) {
       if (!formData.productName) {
@@ -182,6 +204,10 @@ export default function Studio() {
       }
       if (mediaMode === "video-upload" && !videoFile) {
         toast({ title: "No video selected", description: "Please select a video file to upload.", variant: "destructive" });
+        return;
+      }
+      if (mediaMode === "video-images" && imageFiles.length === 0) {
+        toast({ title: "No images selected", description: "Please upload at least one image to create a slideshow video.", variant: "destructive" });
         return;
       }
       handleGenerate();
@@ -208,6 +234,10 @@ export default function Studio() {
 
       if (mediaMode === "video-upload" && videoFile) {
         const result = await uploadVideo.mutateAsync({ file: videoFile, ...base });
+        setGeneratingId(result.id);
+        setStep(3);
+      } else if (mediaMode === "video-images" && imageFiles.length > 0) {
+        const result = await uploadImagesVideo.mutateAsync({ files: imageFiles, ...base });
         setGeneratingId(result.id);
         setStep(3);
       } else if (mediaMode === "video-ai") {
@@ -256,11 +286,14 @@ export default function Studio() {
     if (videoPreviewUrl) URL.revokeObjectURL(videoPreviewUrl);
     setVideoPreviewUrl(null);
     setProgressStep(0);
+    imagePreviews.forEach(url => URL.revokeObjectURL(url));
+    setImageFiles([]);
+    setImagePreviews([]);
   };
 
-  const isPending = generateCreative.isPending || uploadVideo.isPending;
+  const isPending = generateCreative.isPending || uploadVideo.isPending || uploadImagesVideo.isPending;
   const resultIsVideo = resultCreative?.mediaType === "video";
-  const progressSteps = mediaMode === "video-ai" ? VIDEO_STEPS : IMAGE_STEPS;
+  const progressSteps = (mediaMode === "video-ai" || mediaMode === "video-images") ? VIDEO_STEPS : IMAGE_STEPS;
 
   return (
     <div className="max-w-5xl mx-auto space-y-7 pb-16">
@@ -404,75 +437,124 @@ export default function Studio() {
                 </div>
                 <h2 className="font-bold text-lg">{t.studio.mediaType}</h2>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {/* Image */}
-                <button
-                  onClick={() => setMediaMode("image")}
-                  data-testid="media-type-image"
-                  className={`flex flex-col items-center gap-3 p-5 rounded-xl border-2 transition-all ${
-                    mediaMode === "image" ? "border-primary bg-primary/5 shadow-md" : "border-border/50 hover:border-primary/40 bg-background"
-                  }`}
-                >
-                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${mediaMode === "image" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
-                    <ImageIcon className="w-6 h-6" />
-                  </div>
-                  <div className="text-center">
-                    <p className="font-bold text-sm">{t.studio.image}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">AI-generated ad image</p>
-                  </div>
-                  {mediaMode === "image" && <CheckCircle2 className="w-4 h-4 text-primary" />}
-                </button>
 
-                {/* Upload Video */}
-                <button
-                  onClick={() => setMediaMode("video-upload")}
-                  data-testid="media-type-video-upload"
-                  className={`relative flex flex-col items-center gap-3 p-5 rounded-xl border-2 transition-all ${
-                    mediaMode === "video-upload"
-                      ? "border-primary bg-primary/5 shadow-md"
-                      : "border-border/50 hover:border-primary/40 bg-background"
-                  }`}
-                >
-                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${mediaMode === "video-upload" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
-                    <Upload className="w-6 h-6" />
-                  </div>
-                  <div className="text-center">
-                    <p className="font-bold text-sm">{t.studio.uploadVideo}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">{t.studio.uploadVideoDesc}</p>
-                  </div>
-                  {mediaMode === "video-upload" && <CheckCircle2 className="w-4 h-4 text-primary" />}
-                </button>
-
-                {/* AI Video */}
-                <button
-                  onClick={() => setMediaMode("video-ai")}
-                  data-testid="media-type-video-ai"
-                  className={`relative flex flex-col items-center gap-3 p-5 rounded-xl border-2 transition-all ${
-                    mediaMode === "video-ai"
-                      ? "border-indigo-500 bg-indigo-500/5 shadow-md shadow-indigo-500/10"
-                      : "border-border/50 hover:border-indigo-400/50 bg-background"
-                  }`}
-                >
-                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${mediaMode === "video-ai" ? "bg-gradient-to-br from-purple-500 to-indigo-500 text-white shadow-lg shadow-indigo-500/30" : "bg-muted text-muted-foreground"}`}>
-                    <Film className="w-6 h-6" />
-                  </div>
-                  <div className="text-center">
-                    <p className="font-bold text-sm">{t.studio.generateAiVideo}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">3 AI scenes · Real MP4</p>
-                  </div>
-                  {mediaMode === "video-ai" && <CheckCircle2 className="w-4 h-4 text-indigo-500" />}
-                </button>
-              </div>
-
-              {mediaMode === "video-ai" && (
-                <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20">
-                  <Film className="w-4 h-4 text-indigo-400 shrink-0" />
-                  <div>
-                    <p className="text-xs font-semibold text-indigo-300 mb-0.5">3 unique AI-generated scenes → real 15-second MP4</p>
-                    <p className="text-[11px] text-indigo-300/60">Scene 1: Product Hero · Scene 2: Lifestyle Shot · Scene 3: CTA Finale</p>
-                  </div>
+              {/* Image option */}
+              <button
+                onClick={() => setMediaMode("image")}
+                data-testid="media-type-image"
+                className={`w-full flex items-center gap-4 p-4 rounded-xl border-2 transition-all ${
+                  mediaMode === "image" ? "border-primary bg-primary/5 shadow-md" : "border-border/50 hover:border-primary/40 bg-background"
+                }`}
+              >
+                <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${mediaMode === "image" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
+                  <ImageIcon className="w-5 h-5" />
                 </div>
-              )}
+                <div className="text-left flex-1">
+                  <p className="font-bold text-sm">{t.studio.image}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">صورة إعلانية بالذكاء الاصطناعي</p>
+                </div>
+                {mediaMode === "image" && <CheckCircle2 className="w-4 h-4 text-primary shrink-0" />}
+              </button>
+
+              {/* Video section */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <div className="h-px flex-1 bg-border/60" />
+                  <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider px-2 flex items-center gap-1.5">
+                    <Video className="w-3.5 h-3.5" /> {t.studio.videoSectionLabel}
+                  </span>
+                  <div className="h-px flex-1 bg-border/60" />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {/* Video from images */}
+                  <button
+                    onClick={() => setMediaMode("video-images")}
+                    data-testid="media-type-video-images"
+                    className={`relative flex flex-col items-center gap-3 p-5 rounded-xl border-2 transition-all ${
+                      mediaMode === "video-images"
+                        ? "border-emerald-500 bg-emerald-500/5 shadow-md shadow-emerald-500/10"
+                        : "border-border/50 hover:border-emerald-400/50 bg-background"
+                    }`}
+                  >
+                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${mediaMode === "video-images" ? "bg-gradient-to-br from-emerald-500 to-teal-500 text-white shadow-lg shadow-emerald-500/30" : "bg-muted text-muted-foreground"}`}>
+                      <Images className="w-6 h-6" />
+                    </div>
+                    <div className="text-center">
+                      <p className="font-bold text-sm">{t.studio.videoFromImages}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{t.studio.videoFromImagesDesc}</p>
+                    </div>
+                    {mediaMode === "video-images" && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
+                  </button>
+
+                  {/* Avatar video */}
+                  <button
+                    onClick={() => setMediaMode("video-avatar")}
+                    data-testid="media-type-video-avatar"
+                    className={`relative flex flex-col items-center gap-3 p-5 rounded-xl border-2 transition-all ${
+                      mediaMode === "video-avatar"
+                        ? "border-pink-500 bg-pink-500/5 shadow-md shadow-pink-500/10"
+                        : "border-border/50 hover:border-pink-400/50 bg-background"
+                    }`}
+                  >
+                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${mediaMode === "video-avatar" ? "bg-gradient-to-br from-pink-500 to-rose-500 text-white shadow-lg shadow-pink-500/30" : "bg-muted text-muted-foreground"}`}>
+                      <User2 className="w-6 h-6" />
+                    </div>
+                    <div className="text-center">
+                      <p className="font-bold text-sm">{t.studio.videoAvatar}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{t.studio.videoAvatarDesc}</p>
+                    </div>
+                    {mediaMode === "video-avatar" && <CheckCircle2 className="w-4 h-4 text-pink-500" />}
+                  </button>
+
+                  {/* Text to video */}
+                  <button
+                    onClick={() => setMediaMode("video-ai")}
+                    data-testid="media-type-video-ai"
+                    className={`relative flex flex-col items-center gap-3 p-5 rounded-xl border-2 transition-all ${
+                      mediaMode === "video-ai"
+                        ? "border-indigo-500 bg-indigo-500/5 shadow-md shadow-indigo-500/10"
+                        : "border-border/50 hover:border-indigo-400/50 bg-background"
+                    }`}
+                  >
+                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${mediaMode === "video-ai" ? "bg-gradient-to-br from-purple-500 to-indigo-500 text-white shadow-lg shadow-indigo-500/30" : "bg-muted text-muted-foreground"}`}>
+                      <FileText className="w-6 h-6" />
+                    </div>
+                    <div className="text-center">
+                      <p className="font-bold text-sm">{t.studio.videoFromText}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{t.studio.videoFromTextDesc}</p>
+                    </div>
+                    {mediaMode === "video-ai" && <CheckCircle2 className="w-4 h-4 text-indigo-500" />}
+                  </button>
+                </div>
+
+                {/* Mode-specific hints */}
+                {mediaMode === "video-images" && (
+                  <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+                    <Images className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <p className="text-xs font-semibold text-emerald-300">
+                      ارفع حتى 10 صور ← سيتم تحويلها إلى فيديو سلايد شو احترافي بتأثيرات انتقال سلسة
+                    </p>
+                  </div>
+                )}
+                {mediaMode === "video-avatar" && (
+                  <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-pink-500/10 border border-pink-500/20">
+                    <User2 className="w-4 h-4 text-pink-400 shrink-0" />
+                    <p className="text-xs font-semibold text-pink-300">
+                      فيديو مع أفاتار ناطق باستخدام D-ID — ارفع صورة وفيديو قيادي وسيتحدث الأفاتار
+                    </p>
+                  </div>
+                )}
+                {mediaMode === "video-ai" && (
+                  <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20">
+                    <Film className="w-4 h-4 text-indigo-400 shrink-0" />
+                    <div>
+                      <p className="text-xs font-semibold text-indigo-300 mb-0.5">3 unique AI-generated scenes → real 15-second MP4</p>
+                      <p className="text-[11px] text-indigo-300/60">Scene 1: Product Hero · Scene 2: Lifestyle Shot · Scene 3: CTA Finale</p>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="flex justify-end">
@@ -500,11 +582,15 @@ export default function Studio() {
                 <span className={`ms-auto text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5 ${
                   mediaMode === "image" ? "bg-blue-500/15 text-blue-400"
                   : mediaMode === "video-upload" ? "bg-purple-500/15 text-purple-400"
+                  : mediaMode === "video-images" ? "bg-emerald-500/15 text-emerald-400"
+                  : mediaMode === "video-avatar" ? "bg-pink-500/15 text-pink-400"
                   : "bg-indigo-500/15 text-indigo-400"
                 }`}>
-                  {mediaMode === "image" ? <><ImageIcon className="w-3 h-3" /> Image</>
+                  {mediaMode === "image" ? <><ImageIcon className="w-3 h-3" /> {t.studio.image}</>
                    : mediaMode === "video-upload" ? <><Upload className="w-3 h-3" /> Upload</>
-                   : <><Film className="w-3 h-3" /> AI Video</>}
+                   : mediaMode === "video-images" ? <><Images className="w-3 h-3" /> {t.studio.videoFromImages}</>
+                   : mediaMode === "video-avatar" ? <><User2 className="w-3 h-3" /> {t.studio.videoAvatar}</>
+                   : <><FileText className="w-3 h-3" /> {t.studio.videoFromText}</>}
                 </span>
               </div>
 
@@ -576,7 +662,7 @@ export default function Studio() {
                   />
                 </div>
 
-                {/* Video Upload Zone */}
+                {/* Video Upload Zone (legacy) */}
                 {mediaMode === "video-upload" && (
                   <div className="space-y-2">
                     <Label className="text-sm font-semibold">{t.studio.videoFile} <span className="text-destructive">*</span></Label>
@@ -622,6 +708,106 @@ export default function Studio() {
                   </div>
                 )}
 
+                {/* Images Upload Zone — for slideshow video */}
+                {mediaMode === "video-images" && (
+                  <div className="space-y-3">
+                    <Label className="text-sm font-semibold flex items-center gap-2">
+                      <Images className="w-4 h-4 text-emerald-500" />
+                      {t.studio.uploadImages} <span className="text-destructive">*</span>
+                      {imageFiles.length > 0 && (
+                        <span className="ms-auto text-xs font-normal text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-full">
+                          {t.studio.imagesSelected(imageFiles.length)}
+                        </span>
+                      )}
+                    </Label>
+
+                    {/* Image grid preview */}
+                    {imagePreviews.length > 0 && (
+                      <div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
+                        {imagePreviews.map((src, i) => (
+                          <div key={i} className="relative group aspect-square rounded-lg overflow-hidden border border-border/60">
+                            <img src={src} alt={`img ${i+1}`} className="w-full h-full object-cover" />
+                            <button
+                              className="absolute top-1 end-1 w-5 h-5 rounded-full bg-black/70 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                              onClick={() => {
+                                const next = imageFiles.filter((_, idx) => idx !== i);
+                                URL.revokeObjectURL(imagePreviews[i]);
+                                setImageFiles(next);
+                                setImagePreviews(next.map(f => URL.createObjectURL(f)));
+                              }}
+                            >
+                              <XIcon className="w-3 h-3" />
+                            </button>
+                            <span className="absolute bottom-1 start-1 text-[9px] font-bold text-white bg-black/60 px-1 rounded">{i+1}</span>
+                          </div>
+                        ))}
+                        {imageFiles.length < 10 && (
+                          <button
+                            onClick={() => imagesInputRef.current?.click()}
+                            className="aspect-square rounded-lg border-2 border-dashed border-border/60 hover:border-emerald-500/50 hover:bg-emerald-500/5 flex flex-col items-center justify-center gap-1 transition-colors"
+                          >
+                            <Upload className="w-5 h-5 text-muted-foreground" />
+                            <span className="text-[10px] text-muted-foreground">Add</span>
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {imagePreviews.length === 0 && (
+                      <div
+                        className={`border-2 border-dashed rounded-xl p-10 flex flex-col items-center gap-3 cursor-pointer transition-colors ${
+                          isImageDragOver ? "border-emerald-500 bg-emerald-500/5" : "border-border/60 hover:border-emerald-500/50 hover:bg-muted/20"
+                        }`}
+                        onDragOver={e => { e.preventDefault(); setIsImageDragOver(true); }}
+                        onDragLeave={() => setIsImageDragOver(false)}
+                        onDrop={e => { e.preventDefault(); setIsImageDragOver(false); if (e.dataTransfer.files.length) handleImageFilesSelect(e.dataTransfer.files); }}
+                        onClick={() => imagesInputRef.current?.click()}
+                        data-testid="images-drop-zone"
+                      >
+                        <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 flex items-center justify-center">
+                          <Images className="w-7 h-7 text-emerald-500" />
+                        </div>
+                        <div className="text-center">
+                          <p className="font-semibold text-sm">{t.studio.dragDropImages}</p>
+                          <p className="text-xs text-muted-foreground mt-1">{t.studio.imagesFormats}</p>
+                        </div>
+                      </div>
+                    )}
+                    <input
+                      ref={imagesInputRef}
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="hidden"
+                      onChange={e => { if (e.target.files?.length) handleImageFilesSelect(e.target.files); }}
+                      data-testid="input-images-files"
+                    />
+                  </div>
+                )}
+
+                {/* Avatar redirect panel */}
+                {mediaMode === "video-avatar" && (
+                  <div className="rounded-xl border border-pink-500/30 bg-pink-500/5 p-5 space-y-4">
+                    <div className="flex items-start gap-4">
+                      <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-pink-500 to-rose-500 flex items-center justify-center shrink-0 shadow-lg shadow-pink-500/30">
+                        <User2 className="w-6 h-6 text-white" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-bold text-base">{t.studio.avatarRedirectTitle}</h3>
+                        <p className="text-sm text-muted-foreground mt-1">{t.studio.avatarRedirectDesc}</p>
+                      </div>
+                    </div>
+                    <Button
+                      className="w-full h-11 rounded-xl bg-gradient-to-r from-pink-500 to-rose-500 hover:opacity-90 border-0 shadow-lg shadow-pink-500/20 gap-2"
+                      onClick={() => setLocation("/avatar-studio")}
+                    >
+                      <User2 className="w-4 h-4" />
+                      {t.studio.goToAvatarStudio}
+                      <ExternalLink className="w-3.5 h-3.5 ms-auto opacity-70" />
+                    </Button>
+                  </div>
+                )}
+
                 {/* AI Video info banner */}
                 {mediaMode === "video-ai" && (
                   <div className="flex items-start gap-3 p-4 rounded-xl bg-indigo-500/10 border border-indigo-500/25">
@@ -639,23 +825,27 @@ export default function Studio() {
                   <Button variant="outline" onClick={() => setStep(1)} className="h-11 px-6 rounded-xl">
                     <ArrowLeft className="w-4 h-4 me-2" /> {t.studio.backBtn}
                   </Button>
-                  <Button
-                    size="lg"
-                    onClick={handleNext}
-                    disabled={isPending}
-                    data-testid="button-generate"
-                    className="flex-1 h-11 rounded-xl bg-gradient-to-r from-primary to-purple-500 hover:opacity-90 border-0 shadow-lg shadow-primary/20"
-                  >
-                    {isPending ? (
-                      <><Loader2 className="w-4 h-4 animate-spin me-2" /> {t.studio.starting}</>
-                    ) : mediaMode === "video-upload" ? (
-                      <><Upload className="w-4 h-4 me-2" /> {t.studio.uploadVideoBtn}</>
-                    ) : mediaMode === "video-ai" ? (
-                      <><Film className="w-4 h-4 me-2" /> {t.studio.generateVideoBtn}</>
-                    ) : (
-                      <><Sparkles className="w-4 h-4 me-2" /> {t.studio.generateBtn}</>
-                    )}
-                  </Button>
+                  {mediaMode !== "video-avatar" && (
+                    <Button
+                      size="lg"
+                      onClick={handleNext}
+                      disabled={isPending}
+                      data-testid="button-generate"
+                      className="flex-1 h-11 rounded-xl bg-gradient-to-r from-primary to-purple-500 hover:opacity-90 border-0 shadow-lg shadow-primary/20"
+                    >
+                      {isPending ? (
+                        <><Loader2 className="w-4 h-4 animate-spin me-2" /> {t.studio.starting}</>
+                      ) : mediaMode === "video-upload" ? (
+                        <><Upload className="w-4 h-4 me-2" /> {t.studio.uploadVideoBtn}</>
+                      ) : mediaMode === "video-images" ? (
+                        <><Images className="w-4 h-4 me-2" /> {t.studio.generateSlideshowBtn}</>
+                      ) : mediaMode === "video-ai" ? (
+                        <><Film className="w-4 h-4 me-2" /> {t.studio.generateVideoBtn}</>
+                      ) : (
+                        <><Sparkles className="w-4 h-4 me-2" /> {t.studio.generateBtn}</>
+                      )}
+                    </Button>
+                  )}
                 </div>
               </div>
             </div>
