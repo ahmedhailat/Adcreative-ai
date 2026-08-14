@@ -232,7 +232,7 @@ async function generateAdImage(params: {
   const prompt = scenePrompts[sceneKey];
 
   const seed = Math.floor(Math.random() * 999999);
-  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&model=flux&nologo=true&enhance=false&seed=${seed}`;
+  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&model=flux&nologo=true&enhance=true&seed=${seed}`;
 
   console.log(`[image] Generating scene="${sceneKey}" via Pollinations.ai (FLUX)...`);
 
