@@ -18,11 +18,24 @@ import { handleStripeWebhook } from "./webhookHandlers";
 import { api } from "@shared/routes";
 import { AD_FORMATS } from "@shared/schema";
 import { z } from "zod";
+import ffmpegStaticPath from "ffmpeg-static";
 
 const execFileAsync = promisify(execFile);
-const FFMPEG_BIN  = "/nix/store/inqkj79vydizl6ja0d8af99qlxbmyr84-replit-runtime-path/bin/ffmpeg";
-const FONT_BOLD   = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
-
+const FFMPEG_BIN =
+  process.env.FFMPEG_PATH ||
+  (ffmpegStaticPath as unknown as string) ||
+  "ffmpeg";
+if (!fs.existsSync(FFMPEG_BIN) && FFMPEG_BIN !== "ffmpeg") {
+  console.warn(`[video] ffmpeg-static path not found on disk: ${FFMPEG_BIN} — falling back to "ffmpeg" on $PATH`);
+}
+const FONT_BOLD =
+  process.env.FONT_BOLD_PATH ||
+  (fs.existsSync("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
+    ? "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    : "");
+if (!FONT_BOLD) {
+  console.warn("[video] DejaVuSans-Bold.ttf not found — drawtext will fail unless FONT_BOLD_PATH is set");
+}
 // Persistent video storage — served via /api/video/:filename
 const VIDEO_DIR         = "/tmp/ad_videos";
 const UPLOAD_DIR        = "/tmp/uploads";
