@@ -1,3 +1,80 @@
+import type { Express } from "express";
+import type { Server } from "http";
+import bcrypt from "bcryptjs";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
+import os from "os";
+import { execFile } from "child_process";
+import { promisify } from "util";
+import { storage } from "./storage";
+import { db } from "./db";
+import { sql } from "drizzle-orm";
+import { TWILIO_CONFIGURED, getTwilioClient, TWILIO_FROM_SMS, TWILIO_FROM_WA } from "./twilioClient";
+import { replicate, LIVE_PORTRAIT_VERSION } from "./replicateClient";
+import { DID_CONFIGURED, uploadImageToDID, uploadDriverToDID, createDIDClip, getDIDClip } from "./didClient";
+import { stripe } from "./stripeClient";
+import { handleStripeWebhook } from "./webhookHandlers";
+import { api } from "@shared/routes";
+import { AD_FORMATS } from "@shared/schema";
+import { z } from "zod";
+import { execFileSync } from "child_process";
+import ffmpegStaticPath from "ffmpeg-static";
+
+const execFileAsync = promisify(execFile);
+
+// ── Resolve a working ffmpeg binary ─────────────────────────────────────────
+// IMPORTANT: the npm "ffmpeg-static" package's bundled binary does NOT include
+// the "drawtext" filter (used everywhere in this file for headline/CTA/brand
+// text overlays), so it must only be used as a last resort. We prefer the
+// system "ffmpeg" (from $PATH — e.g. Replit's Nix env, or apt-installed
+// ffmpeg on Render via an Aptfile) because that build has full filter support.
+function resolveFfmpeg(): string {
+  if (process.env.FFMPEG_PATH) return process.env.FFMPEG_PATH; // manual override
+
+  // Try system ffmpeg on $PATH first — verify it actually runs.
+  try {
+    execFileSync("ffmpeg", ["-version"], { stdio: "ignore", timeout: 5000 });
+    return "ffmpeg";
+  } catch {
+    console.warn("[video] system \"ffmpeg\" not found on $PATH — falling back to ffmpeg-static (NOTE: lacks drawtext filter support)");
+  }
+
+  if (ffmpegStaticPath && fs.existsSync(ffmpegStaticPath)) {
+    return ffmpegStaticPath as unknown as string;
+  }
+
+  console.error("[video] No working ffmpeg binary found (system PATH or ffmpeg-static). Video generation WILL fail.");
+  return "ffmpeg"; // let it fail loudly with a clear ENOENT rather than silently
+}
+
+const FFMPEG_BIN = resolveFfmpeg();
+console.log(`[video] Using ffmpeg binary: ${FFMPEG_BIN}`);
+
+const FONT_BOLD =
+  process.env.FONT_BOLD_PATH ||
+  (fs.existsSync("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
+    ? "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    : "");
+if (!FONT_BOLD) {
+  console.warn("[video] DejaVuSans-Bold.ttf not found — drawtext will fail unless FONT_BOLD_PATH is set");
+}
+
+// Persistent video storage — served via /api/video/:filename
+const VIDEO_DIR         = "/tmp/ad_videos";
+const UPLOAD_DIR        = "/tmp/uploads";
+const AVATAR_UPLOAD_DIR = "/tmp/avatar-inputs";
+for (const d of [VIDEO_DIR, UPLOAD_DIR, AVATAR_UPLOAD_DIR]) {
+  if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+}
+
+// Multer setup — store video uploads in /tmp/uploads
+const uploadDir = UPLOAD_DIR;
+
+const upload = multer({
+  dest: uploadDir,
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB
+  fileFilter: (_req, file, cb) => {
     if (file.mimetype.startsWith("video/")) {
       cb(null, true);
     } else {
@@ -179,7 +256,7 @@ async function generateAdImage(params: {
   const prompt = scenePrompts[sceneKey];
 
   const seed = Math.floor(Math.random() * 999999);
-  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&model=flux&nologo=true&enhance=true&seed=${seed}`;
+  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&model=flux&nologo=true&enhance=false&seed=${seed}`;
 
   console.log(`[image] Generating scene="${sceneKey}" via Pollinations.ai (FLUX)...`);
 
@@ -882,7 +959,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // Step 2 — run full cinematic pipeline (returns /api/video/:id.mp4)
       const imageData = `data:image/png;base64,${fs.readFileSync(imgPath).toString("base64")}`;
       const videoUrl  = await generateAdVideo({
-        imageData,
+        images:       [imageData, imageData, imageData],
         headline:     "Drive Your Dream",
         cta:          "Shop Now",
         primaryColor: "#6366f1",
