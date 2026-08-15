@@ -8,7 +8,9 @@ export const DID_CONFIGURED = !!process.env.DID_API_KEY;
 
 function didAuth(): string {
   const key = process.env.DID_API_KEY ?? "";
-  return "Basic " + Buffer.from(`${key}:`).toString("base64");
+  // D-ID API keys are already in "API_USERNAME:API_PASSWORD" format —
+  // encode as-is. Do NOT append an extra ":" (that breaks Basic Auth parsing).
+  return "Basic " + Buffer.from(key).toString("base64");
 }
 
 // Upload a face image to D-ID's hosting; returns public D-ID URL
