@@ -18,39 +18,19 @@ import { handleStripeWebhook } from "./webhookHandlers";
 import { api } from "@shared/routes";
 import { AD_FORMATS } from "@shared/schema";
 import { z } from "zod";
-import { execFileSync } from "child_process";
 import ffmpegStaticPath from "ffmpeg-static";
 
 const execFileAsync = promisify(execFile);
-
-// ── Resolve a working ffmpeg binary ─────────────────────────────────────────
-// IMPORTANT: the npm "ffmpeg-static" package's bundled binary does NOT include
-// the "drawtext" filter (used everywhere in this file for headline/CTA/brand
-// text overlays), so it must only be used as a last resort. We prefer the
-// system "ffmpeg" (from $PATH — e.g. Replit's Nix env, or apt-installed
-// ffmpeg on Render via an Aptfile) because that build has full filter support.
-function resolveFfmpeg(): string {
-  if (process.env.FFMPEG_PATH) return process.env.FFMPEG_PATH; // manual override
-
-  // Try system ffmpeg on $PATH first — verify it actually runs.
-  try {
-    execFileSync("ffmpeg", ["-version"], { stdio: "ignore", timeout: 5000 });
-    return "ffmpeg";
-  } catch {
-    console.warn("[video] system \"ffmpeg\" not found on $PATH — falling back to ffmpeg-static (NOTE: lacks drawtext filter support)");
-  }
-
-  if (ffmpegStaticPath && fs.existsSync(ffmpegStaticPath)) {
-    return ffmpegStaticPath as unknown as string;
-  }
-
-  console.error("[video] No working ffmpeg binary found (system PATH or ffmpeg-static). Video generation WILL fail.");
-  return "ffmpeg"; // let it fail loudly with a clear ENOENT rather than silently
+// Resolve ffmpeg from the ffmpeg-static package so the binary path is correct
+// on any machine (Replit, Render, local, etc.) instead of a hardcoded Nix
+// store path that only exists on the exact environment it was copied from.
+const FFMPEG_BIN =
+  process.env.FFMPEG_PATH ||        // manual override if ever needed
+  (ffmpegStaticPath as unknown as string) ||
+  "ffmpeg";                          // last resort: rely on $PATH
+if (!fs.existsSync(FFMPEG_BIN) && FFMPEG_BIN !== "ffmpeg") {
+  console.warn(`[video] ffmpeg-static path not found on disk: ${FFMPEG_BIN} — falling back to "ffmpeg" on $PATH`);
 }
-
-const FFMPEG_BIN = resolveFfmpeg();
-console.log(`[video] Using ffmpeg binary: ${FFMPEG_BIN}`);
-
 const FONT_BOLD =
   process.env.FONT_BOLD_PATH ||
   (fs.existsSync("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
@@ -959,7 +939,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // Step 2 — run full cinematic pipeline (returns /api/video/:id.mp4)
       const imageData = `data:image/png;base64,${fs.readFileSync(imgPath).toString("base64")}`;
       const videoUrl  = await generateAdVideo({
-        images:       [imageData, imageData, imageData],
+        imageData,
         headline:     "Drive Your Dream",
         cta:          "Shop Now",
         primaryColor: "#6366f1",
