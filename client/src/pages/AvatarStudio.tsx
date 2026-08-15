@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, resolveUrl } from "@/lib/queryClient";
 
 // ─── types ───────────────────────────────────────────────────────────────────
 
@@ -340,9 +340,14 @@ export default function AvatarStudio() {
     if (imageUpload.state !== "ready" || videoUpload.state !== "ready") return;
     setJobState({ phase: "creating" });
     try {
-      const res = await apiRequest("POST", "/api/avatar/create-job", {
-        inputImageUrl: imageUpload.serverUrl,
-        inputVideoUrl: videoUpload.serverUrl,
+      const res = await fetch(resolveUrl("/api/avatar/create-job"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          inputImageUrl: imageUpload.serverUrl,
+          inputVideoUrl: videoUpload.serverUrl,
+        }),
       });
       const data = await res.json();
       if (res.status === 402) {
