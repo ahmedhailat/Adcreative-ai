@@ -12,7 +12,7 @@ import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { TWILIO_CONFIGURED, getTwilioClient, TWILIO_FROM_SMS, TWILIO_FROM_WA } from "./twilioClient";
 import { replicate, LIVE_PORTRAIT_VERSION } from "./replicateClient";
-import { DID_CONFIGURED, uploadImageToDID, uploadDriverToDID, createDIDClip, getDIDClip } from "./didClient";
+import { DID_CONFIGURED, uploadImageToDID, createDIDTalk, getDIDTalk } from "./didClient";
 import { stripe } from "./stripeClient";
 import { handleStripeWebhook } from "./webhookHandlers";
 import { api } from "@shared/routes";
@@ -1425,6 +1425,43 @@ ${productDesc ? `الوصف: ${productDesc}` : ""}
     return path.join(AVATAR_UPLOAD_DIR, m[1], m[2]);
   }
 
+  // Public base URL of this deployment — needed so external services (D-ID)
+  // can fetch files we serve, since our normal /api/avatar/file/* route
+  // requires a logged-in session which D-ID's servers can't provide.
+  function getAppUrl(): string {
+    return (
+      process.env.RENDER_EXTERNAL_URL ||
+      (process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : "") ||
+      process.env.APP_URL ||
+      "http://localhost:5000"
+    );
+  }
+
+  // ── Temporary, unauthenticated, token-based file access for D-ID ──────────
+  // D-ID needs to fetch the driving video directly over the internet without
+  // any session cookie. We hand out a short-lived random token that maps to
+  // a specific file path, valid just long enough for D-ID to fetch it.
+  const publicFileTokens = new Map<string, { filePath: string; expiresAt: number }>();
+  const PUBLIC_TOKEN_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+  function createPublicFileUrl(filePath: string): string {
+    const token = crypto.randomUUID
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    publicFileTokens.set(token, { filePath, expiresAt: Date.now() + PUBLIC_TOKEN_TTL_MS });
+    return `${getAppUrl()}/api/avatar/public-file/${token}`;
+  }
+
+  app.get("/api/avatar/public-file/:token", (req, res) => {
+    const entry = publicFileTokens.get(req.params.token);
+    if (!entry || entry.expiresAt < Date.now()) {
+      publicFileTokens.delete(req.params.token);
+      return res.status(404).json({ message: "Link expired or not found" });
+    }
+    if (!fs.existsSync(entry.filePath)) return res.status(404).json({ message: "File not found" });
+    res.sendFile(entry.filePath);
+  });
+
   // POST /api/avatar/upload-input — multer saves file, returns server-relative URL
   app.post("/api/avatar/upload-input", avatarUpload.single("file"), async (req, res) => {
     const userId = req.session?.userId;
@@ -1511,9 +1548,12 @@ ${productDesc ? `الوصف: ${productDesc}` : ""}
       // Respond immediately — AI call runs in background
       res.status(201).json({ job_id: jobId });
 
-      // Background: start generation via D-ID (preferred) or Replicate (fallback)
+      // Background: try D-ID first (if configured — needs a paid plan with
+      // "custom scene" permission to accept a custom driver_url), and on ANY
+      // failure automatically fall back to Replicate LivePortrait, which has
+      // no such plan restriction. The job is only marked "failed" if both
+      // paths are unavailable or fail.
       setImmediate(async () => {
-        const provider = DID_CONFIGURED ? "did" : "replicate";
         try {
           const imagePath = avatarUrlToPath(inputImageUrl);
           const videoPath = avatarUrlToPath(inputVideoUrl);
@@ -1525,24 +1565,31 @@ ${productDesc ? `الوصف: ${productDesc}` : ""}
           const imageBuffer = fs.readFileSync(imagePath);
           const videoBuffer = fs.readFileSync(videoPath);
 
-          let predictionId: string;
+          let predictionId: string | null = null;
+          let provider: "did" | "replicate" = "replicate";
+          let didFailureReason: string | null = null;
 
-          if (provider === "did") {
-            // ── D-ID Clips ─────────────────────────────────────────────────
-            console.log(`[avatar] Job ${jobId} → using D-ID Clips`);
-            const imageExt  = path.extname(imagePath).toLowerCase() || ".jpg";
-            const videoExt  = path.extname(videoPath).toLowerCase() || ".mp4";
-            const imageMime = imageExt === ".png" ? "image/png" : "image/jpeg";
-            const videoMime = videoExt === ".mov" ? "video/quicktime" : "video/mp4";
+          // ── Attempt 1: D-ID (only if an API key is configured) ───────────
+          if (DID_CONFIGURED) {
+            try {
+              console.log(`[avatar] Job ${jobId} → trying D-ID Talks (custom scene)`);
+              const imageExt  = path.extname(imagePath).toLowerCase() || ".jpg";
+              const imageMime = imageExt === ".png" ? "image/png" : "image/jpeg";
 
-            const [didImageUrl, didDriverUrl] = await Promise.all([
-              uploadImageToDID(imageBuffer, `face${imageExt}`, imageMime),
-              uploadDriverToDID(videoBuffer, `driver${videoExt}`, videoMime),
-            ]);
+              const didImageUrl  = await uploadImageToDID(imageBuffer, `face${imageExt}`, imageMime);
+              const publicDriverUrl = createPublicFileUrl(videoPath);
 
-            predictionId = await createDIDClip(didImageUrl, didDriverUrl);
-          } else {
-            // ── Replicate LivePortrait ──────────────────────────────────────
+              predictionId = await createDIDTalk(didImageUrl, publicDriverUrl);
+              provider = "did";
+              console.log(`[avatar] Job ${jobId} → D-ID accepted the job`);
+            } catch (didErr: any) {
+              didFailureReason = didErr?.message ?? "Unknown D-ID error";
+              console.warn(`[avatar] Job ${jobId} → D-ID failed, falling back to Replicate: ${didFailureReason}`);
+            }
+          }
+
+          // ── Attempt 2: Replicate LivePortrait (fallback, or primary if no D-ID key) ──
+          if (!predictionId) {
             console.log(`[avatar] Job ${jobId} → using Replicate LivePortrait`);
             const imageBlob = new Blob([imageBuffer]);
             const videoBlob = new Blob([videoBuffer]);
@@ -1552,6 +1599,7 @@ ${productDesc ? `الوصف: ${productDesc}` : ""}
               input: { face_image: imageBlob, driving_video: videoBlob },
             });
             predictionId = prediction.id;
+            provider = "replicate";
           }
 
           await db.execute(sql`
@@ -1565,8 +1613,8 @@ ${productDesc ? `الوصف: ${productDesc}` : ""}
           console.log(`[avatar] Job ${jobId} → ${provider} prediction ${predictionId} started`);
 
         } catch (err: any) {
-          const msg = `${provider === "did" ? "D-ID" : "Replicate"} error: ${err?.message ?? "Unknown error"}`;
-          console.error(`[avatar] Failed to start ${provider} prediction for job ${jobId}:`, err?.message ?? err);
+          const msg = `Generation error: ${err?.message ?? "Unknown error"}`;
+          console.error(`[avatar] Failed to start prediction for job ${jobId}:`, err?.message ?? err);
           await db.execute(sql`
             UPDATE avatar_jobs
             SET status = 'failed',
@@ -1609,15 +1657,15 @@ ${productDesc ? `الوصف: ${productDesc}` : ""}
 
           if (jobProvider === "did") {
             // ── D-ID polling ───────────────────────────────────────────────
-            const clip = await getDIDClip(job.replicate_prediction_id);
-            console.log(`[avatar] Job ${id} — D-ID status: ${clip.status}`);
+            const talk = await getDIDTalk(job.replicate_prediction_id);
+            console.log(`[avatar] Job ${id} — D-ID status: ${talk.status}`);
 
-            if (clip.status === "done") {
+            if (talk.status === "done") {
               finalStatus = "done";
-              outputUrl   = clip.resultUrl;
-            } else if (clip.status === "error") {
+              outputUrl   = talk.resultUrl;
+            } else if (talk.status === "error") {
               finalStatus = "failed";
-              errMsg      = clip.error ?? "D-ID generation failed";
+              errMsg      = talk.error ?? "D-ID generation failed";
             }
             // "created" | "started" → still processing, no update
 
