@@ -4,3 +4,4 @@
 - [RTL dual-nav sidebar](rtl-sidebar.md) — Sidebar has two SidebarGroup sections: "Navigation" (main pages) and "AI Tools" (new features). LangContext nav keys include campaigns/copilot/smartRules/ugc/bulkLaunch/aiTools in both en and ar.
 - [Avatar Studio AI providers](avatar-providers.md) — D-ID Clips API is primary (DID_API_KEY); Replicate LivePortrait is fallback. Provider chosen at job-creation time, stored in avatar_jobs.provider column. Polling branches on provider field.
 - [Video runtime dependencies](video-runtime.md) — Resolve FFmpeg from PATH at startup; hardcoded Nix store paths can change between workflow sessions and stop the app before video generation starts.
+- [Render build dependencies](render-build-deps.md) — Render may omit devDependencies; packages imported by the production build command must be available as production dependencies.
