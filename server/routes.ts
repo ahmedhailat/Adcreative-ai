@@ -20,6 +20,7 @@ import { AD_FORMATS } from "@shared/schema";
 import { z } from "zod";
 import { execFileSync } from "child_process";
 import ffmpegStaticPath from "ffmpeg-static";
+import { ai } from "./geminiClient";
 
 const execFileAsync = promisify(execFile);
 
@@ -1284,7 +1285,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
 قدم إجابة عملية وموجزة وقابلة للتطبيق فوراً. استخدم النقاط والأرقام حين تفيد.`;
       const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: "gemini-3-flash",
         contents: [{ role: "user", parts: [{ text: prompt }] }],
       });
       const answer = response.candidates?.[0]?.content?.parts?.[0]?.text || "عذراً، لم أتمكن من معالجة طلبك.";
@@ -1345,7 +1346,7 @@ ${productDesc ? `الوصف: ${productDesc}` : ""}
 أجب بـ JSON فقط:
 {"hook":"...","demo":"...","socialProof":"...","cta":"...","productName":"${productName}","hashtags":["#...","#...","#...","#...","#..."]}`;
       const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: "gemini-3-flash",
         contents: [{ role: "user", parts: [{ text: prompt }] }],
       });
       const text = response.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
