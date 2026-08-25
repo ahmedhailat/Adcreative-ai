@@ -605,9 +605,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.status(201).json(brand);
     } catch (err) {
       if (err instanceof z.ZodError) {
+        console.error("[brands] Validation failed:", {
+          body: req.body,
+          issues: err.errors,
+        });
         return res.status(400).json({ message: err.errors[0].message, field: err.errors[0].path.join(".") });
       }
-      throw err;
+      console.error("[brands] Create failed:", err);
+      return res.status(500).json({
+        message: err instanceof Error ? err.message : "Failed to create brand",
+      });
     }
   });
 

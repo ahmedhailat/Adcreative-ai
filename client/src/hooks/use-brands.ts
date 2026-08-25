@@ -36,7 +36,17 @@ export function useCreateBrand() {
         body: JSON.stringify(data),
         credentials: "include",
       });
-      if (!res.ok) throw new Error("Failed to create brand");
+      if (!res.ok) {
+        let message = "Failed to create brand";
+        try {
+          const body = await res.json();
+          if (body?.message) message = body.message;
+          if (body?.field) message += ` (${body.field})`;
+        } catch {
+          // Keep the meaningful fallback when the server did not return JSON.
+        }
+        throw new Error(message);
+      }
       return await res.json();
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: [api.brands.list.path] }),
