@@ -335,28 +335,45 @@ export default function AvatarStudio() {
     uploadFile(file, "video", setVideoUpload);
   };
 
-  // ── generate ──
+  // -- script (replaces driving video) --
+  const [script, setScript] = useState("");
+  const [productName, setProductName] = useState("");
+  const [productDescription, setProductDescription] = useState("");
+  const [generatingScript, setGeneratingScript] = useState(false);
+
+  const handleAiGenerateScript = () => {
+    if (!productName.trim() || !productDescription.trim()) return;
+    setGeneratingScript(true);
+    const greeting = isRTL ? "مرحباً! أقدم لكم " : "Hi! Let me introduce ";
+    setScript(greeting + productName + ". " + productDescription);
+    setGeneratingScript(false);
+  };
+
   const handleGenerate = async () => {
-    if (imageUpload.state !== "ready" || videoUpload.state !== "ready") return;
+    if (imageUpload.state !== "ready") return;
+    if (!script.trim() && (!productName.trim() || !productDescription.trim())) return;
     setJobState({ phase: "creating" });
     try {
-      const res = await fetch(resolveUrl("/api/avatar/create-job"), {
+      const res = await fetch(resolveUrl("/api/avatar/create-job-from-script"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
           inputImageUrl: imageUpload.serverUrl,
-          inputVideoUrl: videoUpload.serverUrl,
+          script: script.trim() || undefined,
+          productName: productName.trim() || undefined,
+          productDescription: productDescription.trim() || undefined,
         }),
       });
       const data = await res.json();
       if (res.status === 402) {
-        toast({ title: isRTL ? "رصيد غير كافٍ" : "Insufficient credits", description: data.message, variant: "destructive" });
+        toast({ title: isRTL ? "رصيد غير كافِ" : "Insufficient credits", description: data.message, variant: "destructive" });
         setJobState({ phase: "idle" });
         return;
       }
       if (!res.ok) throw new Error(data.message || "Failed");
-      setCredits((c) => (c !== null ? c - 0 : null)); // will update on next fetch
+      if (data.script) setScript(data.script);
+      setCredits((c) => (c !== null ? c - 0 : null));
       setJobState({ phase: "polling", jobId: data.job_id, status: "pending" });
     } catch (e: any) {
       toast({ title: isRTL ? "خطأ" : "Error", description: e.message, variant: "destructive" });
@@ -366,11 +383,16 @@ export default function AvatarStudio() {
 
   const resetAll = () => {
     setImageUpload({ state: "empty" });
-    setVideoUpload({ state: "empty" });
+    setScript("");
+    setProductName("");
+    setProductDescription("");
     setJobState({ phase: "idle" });
   };
 
-  const canGenerate = imageUpload.state === "ready" && videoUpload.state === "ready" && !busy;
+  const canGenerate =
+    imageUpload.state === "ready" &&
+    (script.trim().length > 0 || (productName.trim().length > 0 && productDescription.trim().length > 0)) &&
+    !busy;
   const jobActive = jobState.phase !== "idle" && jobState.phase !== "creating";
 
   return (
@@ -402,7 +424,7 @@ export default function AvatarStudio() {
           <p className="text-sm text-muted-foreground mt-1">
             {isRTL
               ? "ارفع صورة مرجعية وفيديو حركة لإنشاء أفاتار ناطق"
-              : "Upload a reference image and a driving video to create a talking avatar"}
+              : "Upload a reference image and write a script to create a talking avatar"}
           </p>
         </div>
       </div>
@@ -429,23 +451,63 @@ export default function AvatarStudio() {
           </div>
 
           <div className="glass-card rounded-2xl p-5 border border-border/60 bg-card/60">
-            <DropZone
-              accept=".mp4,.mov"
-              maxSizeMB={50}
-              label="Driving Video"
-              labelAr="فيديو الحركة"
-              hint="Motion source to transfer · MP4 or MOV · max 50 MB"
-              hintAr="مصدر الحركة للنقل · MP4 أو MOV · الحد 50 ميغابايت"
-              icon={Video}
-              upload={videoUpload}
-              onFile={handleVideoFile}
-              onClear={() => setVideoUpload({ state: "empty" })}
-              isRTL={isRTL}
-              testId="driving-video"
-              disabled={busy}
-            />
+          <div className="glass-card rounded-2xl p-5 border border-border/60 bg-card/60 space-y-4">
+            <div>
+              <label className="text-sm font-semibold text-foreground block mb-1">
+                {isRTL ? "اسم المنتج" : "Product Name"}
+              </label>
+              <input
+                type="text"
+                value={productName}
+                onChange={(e) => setProductName(e.target.value)}
+                disabled={busy}
+                className="w-full px-3 py-2 rounded-lg bg-background border border-border/60 text-sm"
+                placeholder={isRTL ? "مثال: نيون" : "e.g. Neon"}
+                data-testid="input-product-name"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-semibold text-foreground block mb-1">
+                {isRTL ? "وصف المنتج" : "Product Description"}
+              </label>
+              <textarea
+                value={productDescription}
+                onChange={(e) => setProductDescription(e.target.value)}
+                disabled={busy}
+                rows={2}
+                className="w-full px-3 py-2 rounded-lg bg-background border border-border/60 text-sm resize-none"
+                placeholder={isRTL ? "وصف قصير للمنتج" : "Short product description"}
+                data-testid="input-product-description"
+              />
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleAiGenerateScript}
+              disabled={busy || generatingScript || !productName.trim() || !productDescription.trim()}
+              data-testid="button-ai-generate-script"
+            >
+              <Sparkles className="w-4 h-4 mr-2" />
+              {generatingScript
+                ? (isRTL ? "جارٍ التوليد..." : "Generating...")
+                : (isRTL ? "توليد نص بالذكاء الاصطقاعي" : "Generate Script with AI")}
+            </Button>
+            <div>
+              <label className="text-sm font-semibold text-foreground block mb-1">
+                {isRTL ? "النص (يمكن تعديله)" : "Script (editable)"}
+              </label>
+              <textarea
+                value={script}
+                onChange={(e) => setScript(e.target.value)}
+                disabled={busy}
+                rows={4}
+                className="w-full px-3 py-2 rounded-lg bg-background border border-border/60 text-sm resize-none"
+                placeholder={isRTL ? "سيظهر النص هنا، أو اكتبه بنفسك" : "Script will appear here, or write your own"}
+                data-testid="textarea-script"
+              />
+            </div>
           </div>
-        </div>
       )}
 
       {/* Job status card */}

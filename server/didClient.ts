@@ -84,6 +84,46 @@ export async function createDIDTalk(
   return id;
 }
 
+// Create a D-ID Talk using a custom source image + a TEXT SCRIPT.
+// This uses D-ID's built-in TTS (no driving video needed, no "custom scene"
+// permission required) — the standard, widely-supported D-ID flow.
+export async function createDIDTalkFromScript(
+  sourceUrl: string,
+  text: string,
+  voiceId: string = "en-US-JennyNeural",
+): Promise<string> {
+  console.log(`[d-id] Creating talk from script (source=${sourceUrl.slice(0, 60)}…, text="${text.slice(0, 60)}…")`);
+  const res = await fetch(`${DID_BASE}/talks`, {
+    method: "POST",
+    headers: {
+      Authorization: didAuth(),
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      source_url: sourceUrl,
+      script: {
+        type: "text",
+        input: text,
+        provider: {
+          type: "microsoft",
+          voice_id: voiceId,
+        },
+      },
+    }),
+  });
+
+  const body = await res.text();
+  if (!res.ok) {
+    throw new Error(`D-ID talk (script) creation failed (${res.status}): ${body}`);
+  }
+  const data = JSON.parse(body);
+  const id: string = data.id;
+  if (!id) throw new Error(`D-ID talk (script) creation returned no id: ${body}`);
+  console.log(`[d-id] Talk (script) created → id=${id}`);
+  return id;
+}
+
 // Poll a D-ID Talk; returns normalised status info
 export async function getDIDTalk(talkId: string): Promise<{
   status: "created" | "started" | "done" | "error" | string;

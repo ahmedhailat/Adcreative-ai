@@ -12,7 +12,7 @@ import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { TWILIO_CONFIGURED, getTwilioClient, TWILIO_FROM_SMS, TWILIO_FROM_WA } from "./twilioClient";
 import { replicate, LIVE_PORTRAIT_VERSION } from "./replicateClient";
-import { DID_CONFIGURED, uploadImageToDID, createDIDTalk, getDIDTalk } from "./didClient";
+import { DID_CONFIGURED, uploadImageToDID, createDIDTalk, createDIDTalkFromScript, getDIDTalk } from "./didClient";
 import { stripe } from "./stripeClient";
 import { handleStripeWebhook } from "./webhookHandlers";
 import { api } from "@shared/routes";
@@ -1519,6 +1519,121 @@ ${productDesc ? `الوصف: ${productDesc}` : ""}
       res.json({ balance: Number(balance) });
     } catch {
       res.json({ balance: 0 });
+    }
+  });
+
+  // POST /api/avatar/create-job-from-script — image + text script → D-ID talking video.
+  // Uses D-ID's standard TTS-driven flow (no driving video needed, no "custom
+  // scene" permission required). If no script is provided, Gemini generates
+  // one from the product info.
+  app.post("/api/avatar/create-job-from-script", async (req, res) => {
+    const userId = req.session?.userId;
+    if (!userId) return res.status(401).json({ message: "Not authenticated" });
+
+    const schema = z.object({
+      inputImageUrl: z.string().min(1),
+      script: z.string().optional(),
+      productName: z.string().optional(),
+      productDescription: z.string().optional(),
+      goal: z.string().optional(),
+      voiceId: z.string().optional(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.errors[0].message });
+    const { inputImageUrl, productName, productDescription, goal, voiceId } = parsed.data;
+    let { script } = parsed.data;
+
+    if (!DID_CONFIGURED) {
+      return res.status(503).json({ message: "D-ID is not configured on this server" });
+    }
+
+    try {
+      // Ensure credit row exists for users created before this feature
+      await db.execute(sql`
+        INSERT INTO user_credits (user_id, balance)
+        VALUES (${userId}, 3)
+        ON CONFLICT (user_id) DO NOTHING
+      `);
+
+      const creditRows = await db.execute(sql`
+        SELECT balance FROM user_credits WHERE user_id = ${userId}
+      `);
+      const balance = Number((creditRows.rows[0] as any)?.balance ?? 0);
+      if (balance < 1) {
+        return res.status(402).json({ message: "Insufficient credits" });
+      }
+
+      // Auto-generate a script via Gemini if the user didn't provide one
+      if (!script || !script.trim()) {
+        if (!productName || !productDescription) {
+          return res.status(400).json({ message: "Provide either a script, or productName + productDescription for AI generation" });
+        }
+        const prompt = `اكتب نص إعلاني قصير (30-45 ثانية عند القراءة بصوت عالٍ) لفيديو أفاتار ناطق يقدم فيه المتحدث المنتج التالي:
+
+اسم المنتج: ${productName}
+وصف المنتج: ${productDescription}
+هدف الحملة: ${goal ?? "التوعية بالمنتج"}
+
+اكتب النص بصيغة طبيعية للحكي (مو نص مكتوب)، بدون أي تنسيق أو رموز، جاهز للقراءة مباشرة بصوت عالٍ.`;
+        const response = await ai.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+        });
+        script = response.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
+        if (!script) {
+          return res.status(500).json({ message: "Failed to generate script" });
+        }
+        console.log(`[avatar] Auto-generated script (${script.length} chars)`);
+      }
+
+      // Insert job as 'pending'
+      const jobRows = await db.execute(sql`
+        INSERT INTO avatar_jobs (user_id, status, input_image_url, input_video_url, credits_charged)
+        VALUES (${userId}, 'pending', ${inputImageUrl}, ${null}, 1)
+        RETURNING id
+      `);
+      const jobId = Number((jobRows.rows[0] as any)?.id);
+
+      res.status(201).json({ job_id: jobId, script });
+
+      setImmediate(async () => {
+        try {
+          const imagePath = avatarUrlToPath(inputImageUrl);
+          if (!fs.existsSync(imagePath)) {
+            throw new Error("Input image not found on server — it may have been deleted");
+          }
+          const imageBuffer = fs.readFileSync(imagePath);
+          const imageExt  = path.extname(imagePath).toLowerCase() || ".jpg";
+          const imageMime = imageExt === ".png" ? "image/png" : "image/jpeg";
+
+          const didImageUrl = await uploadImageToDID(imageBuffer, `face${imageExt}`, imageMime);
+          const talkId = await createDIDTalkFromScript(didImageUrl, script!, voiceId);
+
+          await db.execute(sql`
+            UPDATE avatar_jobs
+            SET status = 'processing',
+                replicate_prediction_id = ${talkId},
+                provider = 'did',
+                updated_at = NOW()
+            WHERE id = ${jobId}
+          `);
+          console.log(`[avatar] Job ${jobId} → D-ID script talk ${talkId} started`);
+
+        } catch (err: any) {
+          const msg = `Generation error: ${err?.message ?? "Unknown error"}`;
+          console.error(`[avatar] Failed to start script-based talk for job ${jobId}:`, err?.message ?? err);
+          await db.execute(sql`
+            UPDATE avatar_jobs
+            SET status = 'failed',
+                error_message = ${msg},
+                updated_at = NOW()
+            WHERE id = ${jobId}
+          `).catch(() => {});
+        }
+      });
+    } catch (e) {
+      console.error("[avatar] create-job-from-script error:", e);
+      res.status(500).json({ message: "Failed to create job" });
     }
   });
 
