@@ -48,13 +48,14 @@ declare module "express-session" {
   }
 }
 
-app.use(
+app.use((req, res, next) => {
+  if (req.is("multipart/form-data")) return next();
   express.json({
     verify: (req, _res, buf) => {
       req.rawBody = buf;
     },
-  }),
-);
+  })(req, res, next);
+});
 
 app.use(express.urlencoded({ extended: false }));
 

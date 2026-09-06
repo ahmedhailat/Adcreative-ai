@@ -12,16 +12,54 @@ import { db } from "./db";
 import { sql } from "drizzle-orm";
 import { TWILIO_CONFIGURED, getTwilioClient, TWILIO_FROM_SMS, TWILIO_FROM_WA } from "./twilioClient";
 import { replicate, LIVE_PORTRAIT_VERSION } from "./replicateClient";
-import { DID_CONFIGURED, uploadImageToDID, uploadDriverToDID, createDIDClip, getDIDClip } from "./didClient";
+import { DID_CONFIGURED, uploadImageToDID, createDIDTalk, getDIDTalk } from "./didClient";
 import { stripe } from "./stripeClient";
 import { handleStripeWebhook } from "./webhookHandlers";
 import { api } from "@shared/routes";
 import { AD_FORMATS } from "@shared/schema";
 import { z } from "zod";
+import { execFileSync } from "child_process";
+import ffmpegStaticPath from "ffmpeg-static";
+import { ai } from "./geminiClient";
 
 const execFileAsync = promisify(execFile);
-const FFMPEG_BIN  = "/nix/store/inqkj79vydizl6ja0d8af99qlxbmyr84-replit-runtime-path/bin/ffmpeg";
-const FONT_BOLD   = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
+
+// ── Resolve a working ffmpeg binary ─────────────────────────────────────────
+// IMPORTANT: the npm "ffmpeg-static" package's bundled binary does NOT include
+// the "drawtext" filter (used everywhere in this file for headline/CTA/brand
+// text overlays), so it must only be used as a last resort. We prefer the
+// system "ffmpeg" (from $PATH — e.g. Replit's Nix env, or apt-installed
+// ffmpeg on Render via an Aptfile) because that build has full filter support.
+function resolveFfmpeg(): string {
+  if (process.env.FFMPEG_PATH) return process.env.FFMPEG_PATH; // manual override
+
+  // Try system ffmpeg on $PATH first — verify it actually runs.
+  try {
+    execFileSync("ffmpeg", ["-version"], { stdio: "ignore", timeout: 5000 });
+    return "ffmpeg";
+  } catch {
+    console.warn("[video] system \"ffmpeg\" not found on $PATH — falling back to ffmpeg-static (NOTE: lacks drawtext filter support)");
+  }
+
+  if (ffmpegStaticPath && fs.existsSync(ffmpegStaticPath)) {
+    return ffmpegStaticPath as unknown as string;
+  }
+
+  console.error("[video] No working ffmpeg binary found (system PATH or ffmpeg-static). Video generation WILL fail.");
+  return "ffmpeg"; // let it fail loudly with a clear ENOENT rather than silently
+}
+
+const FFMPEG_BIN = resolveFfmpeg();
+console.log(`[video] Using ffmpeg binary: ${FFMPEG_BIN}`);
+
+const FONT_BOLD =
+  process.env.FONT_BOLD_PATH ||
+  (fs.existsSync("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
+    ? "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    : "");
+if (!FONT_BOLD) {
+  console.warn("[video] DejaVuSans-Bold.ttf not found — drawtext will fail unless FONT_BOLD_PATH is set");
+}
 
 // Persistent video storage — served via /api/video/:filename
 const VIDEO_DIR         = "/tmp/ad_videos";
@@ -219,7 +257,7 @@ async function generateAdImage(params: {
   const prompt = scenePrompts[sceneKey];
 
   const seed = Math.floor(Math.random() * 999999);
-  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&model=flux&nologo=true&enhance=true&seed=${seed}`;
+  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&model=flux&nologo=true&enhance=false&seed=${seed}`;
 
   console.log(`[image] Generating scene="${sceneKey}" via Pollinations.ai (FLUX)...`);
 
@@ -568,9 +606,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.status(201).json(brand);
     } catch (err) {
       if (err instanceof z.ZodError) {
+        console.error("[brands] Validation failed:", {
+          body: req.body,
+          issues: err.errors,
+        });
         return res.status(400).json({ message: err.errors[0].message, field: err.errors[0].path.join(".") });
       }
-      throw err;
+      console.error("[brands] Create failed:", err);
+      return res.status(500).json({
+        message: err instanceof Error ? err.message : "Failed to create brand",
+      });
     }
   });
 
@@ -782,6 +827,126 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // ===== SLIDESHOW GENERATOR =====
+  async function generateSlideshowVideo(imagePaths: string[]): Promise<string> {
+    const id      = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const outPath = path.join(VIDEO_DIR, `${id}.mp4`);
+    const n       = imagePaths.length;
+
+    const duration    = 3.0; // seconds each image is uniquely visible
+    const fadeDur     = 0.5; // crossfade duration
+    const inputDur    = duration + fadeDur; // each input slightly longer to allow overlap
+
+    // Inputs: loop each image
+    const inputArgs = imagePaths.flatMap(p => ["-loop", "1", "-t", String(inputDur), "-i", p]);
+
+    // Scale each to 1080×1080
+    const scaleFilters = imagePaths.map((_, i) =>
+      `[${i}:v]scale=1080:1080:force_original_aspect_ratio=increase,crop=1080:1080,setsar=1,fps=25[v${i}]`
+    );
+
+    // xfade chain (offset = i * (duration - fadeDur))
+    let xfadeFilters: string[] = [];
+    if (n > 1) {
+      let lastLabel = "[v0]";
+      for (let i = 1; i < n; i++) {
+        const offset   = i * (duration - fadeDur);
+        const outLabel = i === n - 1 ? "[out]" : `[xf${i}]`;
+        xfadeFilters.push(`${lastLabel}[v${i}]xfade=transition=fade:duration=${fadeDur}:offset=${offset}${outLabel}`);
+        lastLabel = `[xf${i}]`;
+      }
+    }
+
+    const filterComplex = [...scaleFilters, ...xfadeFilters].join(";");
+    const mapLabel      = n === 1 ? "[v0]" : "[out]";
+
+    console.log(`[slideshow] Building ${n}-image slideshow → ${id}.mp4`);
+    await execFileAsync(FFMPEG_BIN, [
+      "-y",
+      ...inputArgs,
+      "-filter_complex", filterComplex,
+      "-map", mapLabel,
+      "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "fast", "-crf", "26",
+      "-movflags", "+faststart",
+      outPath,
+    ], { timeout: 120_000, maxBuffer: 50 * 1024 * 1024 });
+
+    if (!fs.existsSync(outPath)) throw new Error("FFmpeg slideshow finished but output missing");
+    const size = fs.statSync(outPath).size;
+    console.log(`[slideshow] Done! ${id}.mp4 — ${(size / 1024).toFixed(0)} KB`);
+    return `/api/video/${id}.mp4`;
+  }
+
+  // ===== IMAGE SLIDESHOW → VIDEO =====
+  const imagesUpload = multer({
+    dest: UPLOAD_DIR,
+    limits: { fileSize: 20 * 1024 * 1024 }, // 20MB per image
+    fileFilter: (_req, file, cb) => {
+      if (file.mimetype.startsWith("image/")) cb(null, true);
+      else cb(new Error("Only image files are allowed"));
+    },
+  });
+
+  app.post("/api/creatives/upload-images-video", imagesUpload.array("images", 10), async (req, res) => {
+    try {
+      const files = req.files as Express.Multer.File[] | undefined;
+      if (!files || files.length === 0) {
+        return res.status(400).json({ message: "No image files uploaded" });
+      }
+
+      const {
+        brandId, title, platform, formatSize, formatName,
+        productName, productDescription, goal, targetAudience,
+      } = req.body;
+
+      if (!brandId || !platform || !formatSize || !productName || !productDescription || !goal) {
+        files.forEach(f => { try { fs.unlinkSync(f.path); } catch {} });
+        return res.status(400).json({ message: "Missing required fields" });
+      }
+
+      const adTitle = title || `${productName} – ${formatName || formatSize}`;
+
+      // Create a "generating" creative record immediately so the client can poll
+      const creative = await storage.createCreative({
+        brandId: Number(brandId),
+        title: adTitle,
+        platform,
+        formatSize,
+        formatName: formatName || formatSize,
+        productName,
+        productDescription,
+        targetAudience: targetAudience || null,
+        goal,
+        adCopy: null,
+        imageData: null,
+        videoUrl: null,
+        mediaType: "video",
+        status: "generating",
+        performanceScore: null,
+        isFavorite: false,
+      });
+
+      // Generate slideshow in background
+      (async () => {
+        const imagePaths = files.map(f => f.path);
+        try {
+          const videoUrl = await generateSlideshowVideo(imagePaths);
+          await storage.updateCreative(creative.id, { videoUrl, status: "ready" });
+        } catch (err: any) {
+          console.error("[slideshow] FFmpeg error:", err?.message);
+          await storage.updateCreative(creative.id, { status: "failed" });
+        } finally {
+          imagePaths.forEach(p => { try { fs.unlinkSync(p); } catch {} });
+        }
+      })();
+
+      res.status(201).json(creative);
+    } catch (err: any) {
+      console.error("Image slideshow upload failed:", err);
+      res.status(500).json({ message: err.message || "Slideshow generation failed" });
+    }
+  });
+
   // ===== VIDEO TEST ENDPOINT (cinematic 3-scene pipeline) =====
   app.get("/api/test-video", async (_req, res) => {
     try {
@@ -802,7 +967,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // Step 2 — run full cinematic pipeline (returns /api/video/:id.mp4)
       const imageData = `data:image/png;base64,${fs.readFileSync(imgPath).toString("base64")}`;
       const videoUrl  = await generateAdVideo({
-        imageData,
+        images:       [imageData, imageData, imageData],
         headline:     "Drive Your Dream",
         cta:          "Shop Now",
         primaryColor: "#6366f1",
@@ -1120,7 +1285,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
 قدم إجابة عملية وموجزة وقابلة للتطبيق فوراً. استخدم النقاط والأرقام حين تفيد.`;
       const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: "gemini-3-flash",
         contents: [{ role: "user", parts: [{ text: prompt }] }],
       });
       const answer = response.candidates?.[0]?.content?.parts?.[0]?.text || "عذراً، لم أتمكن من معالجة طلبك.";
@@ -1181,7 +1346,7 @@ ${productDesc ? `الوصف: ${productDesc}` : ""}
 أجب بـ JSON فقط:
 {"hook":"...","demo":"...","socialProof":"...","cta":"...","productName":"${productName}","hashtags":["#...","#...","#...","#...","#..."]}`;
       const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: "gemini-3-flash",
         contents: [{ role: "user", parts: [{ text: prompt }] }],
       });
       const text = response.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
@@ -1267,6 +1432,43 @@ ${productDesc ? `الوصف: ${productDesc}` : ""}
     if (!m) throw new Error(`Cannot resolve avatar file path from URL: ${url}`);
     return path.join(AVATAR_UPLOAD_DIR, m[1], m[2]);
   }
+
+  // Public base URL of this deployment — needed so external services (D-ID)
+  // can fetch files we serve, since our normal /api/avatar/file/* route
+  // requires a logged-in session which D-ID's servers can't provide.
+  function getAppUrl(): string {
+    return (
+      process.env.RENDER_EXTERNAL_URL ||
+      (process.env.REPLIT_DEV_DOMAIN ? `https://${process.env.REPLIT_DEV_DOMAIN}` : "") ||
+      process.env.APP_URL ||
+      "http://localhost:5000"
+    );
+  }
+
+  // ── Temporary, unauthenticated, token-based file access for D-ID ──────────
+  // D-ID needs to fetch the driving video directly over the internet without
+  // any session cookie. We hand out a short-lived random token that maps to
+  // a specific file path, valid just long enough for D-ID to fetch it.
+  const publicFileTokens = new Map<string, { filePath: string; expiresAt: number }>();
+  const PUBLIC_TOKEN_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+  function createPublicFileUrl(filePath: string): string {
+    const token = crypto.randomUUID
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    publicFileTokens.set(token, { filePath, expiresAt: Date.now() + PUBLIC_TOKEN_TTL_MS });
+    return `${getAppUrl()}/api/avatar/public-file/${token}`;
+  }
+
+  app.get("/api/avatar/public-file/:token", (req, res) => {
+    const entry = publicFileTokens.get(req.params.token);
+    if (!entry || entry.expiresAt < Date.now()) {
+      publicFileTokens.delete(req.params.token);
+      return res.status(404).json({ message: "Link expired or not found" });
+    }
+    if (!fs.existsSync(entry.filePath)) return res.status(404).json({ message: "File not found" });
+    res.sendFile(entry.filePath);
+  });
 
   // POST /api/avatar/upload-input — multer saves file, returns server-relative URL
   app.post("/api/avatar/upload-input", avatarUpload.single("file"), async (req, res) => {
@@ -1354,9 +1556,12 @@ ${productDesc ? `الوصف: ${productDesc}` : ""}
       // Respond immediately — AI call runs in background
       res.status(201).json({ job_id: jobId });
 
-      // Background: start generation via D-ID (preferred) or Replicate (fallback)
+      // Background: try D-ID first (if configured — needs a paid plan with
+      // "custom scene" permission to accept a custom driver_url), and on ANY
+      // failure automatically fall back to Replicate LivePortrait, which has
+      // no such plan restriction. The job is only marked "failed" if both
+      // paths are unavailable or fail.
       setImmediate(async () => {
-        const provider = DID_CONFIGURED ? "did" : "replicate";
         try {
           const imagePath = avatarUrlToPath(inputImageUrl);
           const videoPath = avatarUrlToPath(inputVideoUrl);
@@ -1368,24 +1573,31 @@ ${productDesc ? `الوصف: ${productDesc}` : ""}
           const imageBuffer = fs.readFileSync(imagePath);
           const videoBuffer = fs.readFileSync(videoPath);
 
-          let predictionId: string;
+          let predictionId: string | null = null;
+          let provider: "did" | "replicate" = "replicate";
+          let didFailureReason: string | null = null;
 
-          if (provider === "did") {
-            // ── D-ID Clips ─────────────────────────────────────────────────
-            console.log(`[avatar] Job ${jobId} → using D-ID Clips`);
-            const imageExt  = path.extname(imagePath).toLowerCase() || ".jpg";
-            const videoExt  = path.extname(videoPath).toLowerCase() || ".mp4";
-            const imageMime = imageExt === ".png" ? "image/png" : "image/jpeg";
-            const videoMime = videoExt === ".mov" ? "video/quicktime" : "video/mp4";
+          // ── Attempt 1: D-ID (only if an API key is configured) ───────────
+          if (DID_CONFIGURED) {
+            try {
+              console.log(`[avatar] Job ${jobId} → trying D-ID Talks (custom scene)`);
+              const imageExt  = path.extname(imagePath).toLowerCase() || ".jpg";
+              const imageMime = imageExt === ".png" ? "image/png" : "image/jpeg";
 
-            const [didImageUrl, didDriverUrl] = await Promise.all([
-              uploadImageToDID(imageBuffer, `face${imageExt}`, imageMime),
-              uploadDriverToDID(videoBuffer, `driver${videoExt}`, videoMime),
-            ]);
+              const didImageUrl  = await uploadImageToDID(imageBuffer, `face${imageExt}`, imageMime);
+              const publicDriverUrl = createPublicFileUrl(videoPath);
 
-            predictionId = await createDIDClip(didImageUrl, didDriverUrl);
-          } else {
-            // ── Replicate LivePortrait ──────────────────────────────────────
+              predictionId = await createDIDTalk(didImageUrl, publicDriverUrl);
+              provider = "did";
+              console.log(`[avatar] Job ${jobId} → D-ID accepted the job`);
+            } catch (didErr: any) {
+              didFailureReason = didErr?.message ?? "Unknown D-ID error";
+              console.warn(`[avatar] Job ${jobId} → D-ID failed, falling back to Replicate: ${didFailureReason}`);
+            }
+          }
+
+          // ── Attempt 2: Replicate LivePortrait (fallback, or primary if no D-ID key) ──
+          if (!predictionId) {
             console.log(`[avatar] Job ${jobId} → using Replicate LivePortrait`);
             const imageBlob = new Blob([imageBuffer]);
             const videoBlob = new Blob([videoBuffer]);
@@ -1395,6 +1607,7 @@ ${productDesc ? `الوصف: ${productDesc}` : ""}
               input: { face_image: imageBlob, driving_video: videoBlob },
             });
             predictionId = prediction.id;
+            provider = "replicate";
           }
 
           await db.execute(sql`
@@ -1408,8 +1621,8 @@ ${productDesc ? `الوصف: ${productDesc}` : ""}
           console.log(`[avatar] Job ${jobId} → ${provider} prediction ${predictionId} started`);
 
         } catch (err: any) {
-          const msg = `${provider === "did" ? "D-ID" : "Replicate"} error: ${err?.message ?? "Unknown error"}`;
-          console.error(`[avatar] Failed to start ${provider} prediction for job ${jobId}:`, err?.message ?? err);
+          const msg = `Generation error: ${err?.message ?? "Unknown error"}`;
+          console.error(`[avatar] Failed to start prediction for job ${jobId}:`, err?.message ?? err);
           await db.execute(sql`
             UPDATE avatar_jobs
             SET status = 'failed',
@@ -1452,15 +1665,15 @@ ${productDesc ? `الوصف: ${productDesc}` : ""}
 
           if (jobProvider === "did") {
             // ── D-ID polling ───────────────────────────────────────────────
-            const clip = await getDIDClip(job.replicate_prediction_id);
-            console.log(`[avatar] Job ${id} — D-ID status: ${clip.status}`);
+            const talk = await getDIDTalk(job.replicate_prediction_id);
+            console.log(`[avatar] Job ${id} — D-ID status: ${talk.status}`);
 
-            if (clip.status === "done") {
+            if (talk.status === "done") {
               finalStatus = "done";
-              outputUrl   = clip.resultUrl;
-            } else if (clip.status === "error") {
+              outputUrl   = talk.resultUrl;
+            } else if (talk.status === "error") {
               finalStatus = "failed";
-              errMsg      = clip.error ?? "D-ID generation failed";
+              errMsg      = talk.error ?? "D-ID generation failed";
             }
             // "created" | "started" → still processing, no update
 

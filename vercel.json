@@ -1,7 +1,9 @@
 {
   "buildCommand": "npx tsx script/build-client.ts",
+  "installCommand": "pnpm install --no-frozen-lockfile",
   "outputDirectory": "dist/public",
   "rewrites": [
+    { "source": "/api/(.*)", "destination": "https://neonadai.onrender.com/api/$1" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

@@ -8,10 +8,12 @@ export const DID_CONFIGURED = !!process.env.DID_API_KEY;
 
 function didAuth(): string {
   const key = process.env.DID_API_KEY ?? "";
-  return "Basic " + Buffer.from(`${key}:`).toString("base64");
+  // D-ID API keys are already in "API_USERNAME:API_PASSWORD" format —
+  // encode as-is. Do NOT append an extra ":" (that breaks Basic Auth parsing).
+  return "Basic " + Buffer.from(key).toString("base64");
 }
 
-// Upload a face image to D-ID's hosting; returns public D-ID URL
+// Upload a face image to D-ID's hosting; returns public D-ID URL (used as source_url)
 export async function uploadImageToDID(
   imageBuffer: Buffer,
   filename = "face.jpg",
@@ -38,40 +40,20 @@ export async function uploadImageToDID(
   return url;
 }
 
-// Upload a driver video to D-ID's clip driver hosting; returns public D-ID driver URL
-export async function uploadDriverToDID(
-  videoBuffer: Buffer,
-  filename = "driver.mp4",
-  mimeType = "video/mp4",
-): Promise<string> {
-  const form = new FormData();
-  form.append("driver", new Blob([videoBuffer], { type: mimeType }), filename);
-
-  console.log(`[d-id] Uploading driver video (${Math.round(videoBuffer.length / 1024)} KB)…`);
-  const res = await fetch(`${DID_BASE}/clips/drivers`, {
-    method: "POST",
-    headers: { Authorization: didAuth() },
-    body: form,
-  });
-
-  const body = await res.text();
-  if (!res.ok) {
-    throw new Error(`D-ID driver upload failed (${res.status}): ${body}`);
-  }
-  const data = JSON.parse(body);
-  const url: string = data.url ?? data.driver_url ?? data.id;
-  if (!url) throw new Error(`D-ID driver upload returned no url: ${body}`);
-  console.log(`[d-id] Driver uploaded → ${url}`);
-  return url;
-}
-
-// Create a D-ID Clip job; returns the clip ID
-export async function createDIDClip(
+// Create a D-ID Talk using a custom source image + a custom driving video.
+// NOTE: driver_url must be a plain, publicly-fetchable URL — D-ID does NOT
+// have a separate "upload driver video" endpoint. The caller is responsible
+// for exposing the driving video at a temporary public URL (e.g. via a
+// short-lived signed route on our own server) before calling this.
+// NOTE: using a custom driver_url requires a D-ID plan with "custom scene"
+// permission — accounts without it will get a 403 PermissionError here,
+// which the caller should catch and fall back to another provider.
+export async function createDIDTalk(
   sourceUrl: string,
   driverUrl: string,
 ): Promise<string> {
-  console.log(`[d-id] Creating clip (source=${sourceUrl.slice(0, 60)}…)`);
-  const res = await fetch(`${DID_BASE}/clips`, {
+  console.log(`[d-id] Creating talk (source=${sourceUrl.slice(0, 60)}…, driver=${driverUrl.slice(0, 60)}…)`);
+  const res = await fetch(`${DID_BASE}/talks`, {
     method: "POST",
     headers: {
       Authorization: didAuth(),
@@ -81,27 +63,34 @@ export async function createDIDClip(
     body: JSON.stringify({
       source_url: sourceUrl,
       driver_url: driverUrl,
+      // D-ID's /talks endpoint requires a "script". Since the goal here is to
+      // replicate the driving video's own motion + speech, we point the audio
+      // source at the same driver video (D-ID extracts the audio track).
+      script: {
+        type: "audio",
+        audio_url: driverUrl,
+      },
     }),
   });
 
   const body = await res.text();
   if (!res.ok) {
-    throw new Error(`D-ID clip creation failed (${res.status}): ${body}`);
+    throw new Error(`D-ID talk creation failed (${res.status}): ${body}`);
   }
   const data = JSON.parse(body);
   const id: string = data.id;
-  if (!id) throw new Error(`D-ID clip creation returned no id: ${body}`);
-  console.log(`[d-id] Clip created → id=${id}`);
+  if (!id) throw new Error(`D-ID talk creation returned no id: ${body}`);
+  console.log(`[d-id] Talk created → id=${id}`);
   return id;
 }
 
-// Poll a D-ID Clip; returns normalised status info
-export async function getDIDClip(clipId: string): Promise<{
+// Poll a D-ID Talk; returns normalised status info
+export async function getDIDTalk(talkId: string): Promise<{
   status: "created" | "started" | "done" | "error" | string;
   resultUrl: string | null;
   error: string | null;
 }> {
-  const res = await fetch(`${DID_BASE}/clips/${clipId}`, {
+  const res = await fetch(`${DID_BASE}/talks/${talkId}`, {
     headers: {
       Authorization: didAuth(),
       Accept: "application/json",
@@ -110,7 +99,7 @@ export async function getDIDClip(clipId: string): Promise<{
 
   const body = await res.text();
   if (!res.ok) {
-    throw new Error(`D-ID clip status check failed (${res.status}): ${body}`);
+    throw new Error(`D-ID talk status check failed (${res.status}): ${body}`);
   }
   const data = JSON.parse(body);
   const errMsg =

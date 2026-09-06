@@ -94,6 +94,48 @@ export function useUploadVideo() {
   });
 }
 
+export function useUploadImagesVideo() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: {
+      files: File[];
+      brandId: number;
+      title: string;
+      platform: string;
+      formatSize: string;
+      formatName: string;
+      productName: string;
+      productDescription: string;
+      goal: string;
+      targetAudience?: string;
+    }) => {
+      const formData = new FormData();
+      data.files.forEach(f => formData.append("images", f));
+      formData.append("brandId", String(data.brandId));
+      formData.append("title", data.title);
+      formData.append("platform", data.platform);
+      formData.append("formatSize", data.formatSize);
+      formData.append("formatName", data.formatName);
+      formData.append("productName", data.productName);
+      formData.append("productDescription", data.productDescription);
+      formData.append("goal", data.goal);
+      if (data.targetAudience) formData.append("targetAudience", data.targetAudience);
+
+      const res = await fetch("/api/creatives/upload-images-video", {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message || "Failed to create slideshow video");
+      }
+      return await res.json();
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [api.creatives.list.path] }),
+  });
+}
+
 export function useToggleFavoriteCreative() {
   const queryClient = useQueryClient();
   return useMutation({
