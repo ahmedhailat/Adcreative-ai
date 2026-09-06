@@ -421,7 +421,9 @@ async function generateAdVideo(params: {
     console.log(`[video] Done! ${id}.mp4 — ${(size / 1024).toFixed(0)} KB`);
     return `/api/video/${id}.mp4`;
   } catch (err: any) {
-    console.error("[video] FFmpeg error:", err?.message?.slice?.(0, 400));
+    console.error("[video] FFmpeg error message:", err?.message?.slice?.(0, 500));
+    console.error("[video] FFmpeg stderr:", err?.stderr?.toString?.()?.slice?.(0, 2000));
+    console.error("[video] FFmpeg stdout:", err?.stdout?.toString?.()?.slice?.(0, 500));
     console.error("[video] stderr:", err?.stderr?.slice?.(0, 1200) ?? "none");
     throw err;
   } finally {
