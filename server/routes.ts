@@ -1285,7 +1285,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
 قدم إجابة عملية وموجزة وقابلة للتطبيق فوراً. استخدم النقاط والأرقام حين تفيد.`;
       const response = await ai.models.generateContent({
-        model: "gemini-3-flash",
+        model: "gemini-3.5-flash",
         contents: [{ role: "user", parts: [{ text: prompt }] }],
       });
       const answer = response.candidates?.[0]?.content?.parts?.[0]?.text || "عذراً، لم أتمكن من معالجة طلبك.";
@@ -1346,7 +1346,7 @@ ${productDesc ? `الوصف: ${productDesc}` : ""}
 أجب بـ JSON فقط:
 {"hook":"...","demo":"...","socialProof":"...","cta":"...","productName":"${productName}","hashtags":["#...","#...","#...","#...","#..."]}`;
       const response = await ai.models.generateContent({
-        model: "gemini-3-flash",
+        model: "gemini-3.5-flash",
         contents: [{ role: "user", parts: [{ text: prompt }] }],
       });
       const text = response.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
