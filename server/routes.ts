@@ -385,25 +385,29 @@ async function generateAdVideo(params: {
   ].join(",");
 
   try {
-    console.log("[video] Rendering 3 unique-image scenes in parallel...");
+    console.log("[video] Rendering 3 unique-image scenes sequentially (low-memory mode)...");
 
-    // Each scene uses its OWN unique AI-generated image
-    await Promise.all([
-      execFileAsync(FFMPEG_BIN, [
-        "-y", "-loop", "1", "-t", "5", "-i", img1Path,
-        "-vf", scene1vf, ...ENC, s1Path,
-      ], { timeout: 240_000, maxBuffer: 50 * 1024 * 1024 }),
+    // Rendered ONE AT A TIME (not Promise.all) to keep peak memory low —
+    // 3 parallel FFmpeg encodes was OOM-killing the Render free tier
+    // instance (512MB RAM), leaving jobs stuck in "generating" forever
+    // since the process died before updating the database.
+    console.log("[video] Scene 1/3...");
+    await execFileAsync(FFMPEG_BIN, [
+      "-y", "-loop", "1", "-t", "5", "-i", img1Path,
+      "-vf", scene1vf, ...ENC, s1Path,
+    ], { timeout: 240_000, maxBuffer: 50 * 1024 * 1024 });
 
-      execFileAsync(FFMPEG_BIN, [
-        "-y", "-loop", "1", "-t", "5", "-i", img2Path,
-        "-vf", scene2vf, ...ENC, s2Path,
-      ], { timeout: 120_000, maxBuffer: 50 * 1024 * 1024 }),
+    console.log("[video] Scene 2/3...");
+    await execFileAsync(FFMPEG_BIN, [
+      "-y", "-loop", "1", "-t", "5", "-i", img2Path,
+      "-vf", scene2vf, ...ENC, s2Path,
+    ], { timeout: 120_000, maxBuffer: 50 * 1024 * 1024 });
 
-      execFileAsync(FFMPEG_BIN, [
-        "-y", "-loop", "1", "-t", "5", "-i", img3Path,
-        "-vf", scene3vf, ...ENC, s3Path,
-      ], { timeout: 240_000, maxBuffer: 50 * 1024 * 1024 }),
-    ]);
+    console.log("[video] Scene 3/3...");
+    await execFileAsync(FFMPEG_BIN, [
+      "-y", "-loop", "1", "-t", "5", "-i", img3Path,
+      "-vf", scene3vf, ...ENC, s3Path,
+    ], { timeout: 240_000, maxBuffer: 50 * 1024 * 1024 });
 
     // Stream-copy concat — no re-encoding, nearly instant
     fs.writeFileSync(listPath, `file '${s1Path}'\nfile '${s2Path}'\nfile '${s3Path}'\n`);
